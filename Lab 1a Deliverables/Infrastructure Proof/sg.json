@@ -1,0 +1,108 @@
+{
+    "SecurityGroups": [
+        {
+            "GroupId": "sg-04aa93fe6a6e1638a",
+            "IpPermissionsEgress": [
+                {
+                    "IpProtocol": "-1",
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ],
+            "Tags": [
+                {
+                    "Key": "Name",
+                    "Value": "Lab1-RDS-sg"
+                }
+            ],
+            "VpcId": "vpc-0873f0a3e8ff57faf",
+            "SecurityGroupArn": "arn:aws:ec2:us-west-2:262164343754:security-group/sg-04aa93fe6a6e1638a",
+            "OwnerId": "262164343754",
+            "GroupName": "lab-rds-sg",
+            "Description": "Security group for RDS in Lab 1a",
+            "IpPermissions": [
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 3306,
+                    "ToPort": 3306,
+                    "UserIdGroupPairs": [
+                        {
+                            "Description": "EC2 SG-to-RDS",
+                            "UserId": "262164343754",
+                            "GroupId": "sg-062507ae22e7c3588"
+                        }
+                    ],
+                    "IpRanges": [],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ]
+        },
+        {
+            "GroupId": "sg-062507ae22e7c3588",
+            "IpPermissionsEgress": [
+                {
+                    "IpProtocol": "-1",
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ],
+            "Tags": [
+                {
+                    "Key": "Name",
+                    "Value": "Lab1-EC2-sg"
+                }
+            ],
+            "VpcId": "vpc-0873f0a3e8ff57faf",
+            "SecurityGroupArn": "arn:aws:ec2:us-west-2:262164343754:security-group/sg-062507ae22e7c3588",
+            "OwnerId": "262164343754",
+            "GroupName": "lab-ec2-sg",
+            "Description": "Security group for EC2 instances in Lab 1a",
+            "IpPermissions": [
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 80,
+                    "ToPort": 80,
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "Description": "Web app access",
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                },
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 22,
+                    "ToPort": 22,
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "Description": "Admin access",
+                            "CidrIp": "100.15.69.47/32"
+                        },
+                        {
+                            "CidrIp": "18.237.140.160/29"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ]
+        }
+    ]
+}

@@ -1,0 +1,8 @@
+{
+    "AttachedPolicies": [
+        {
+            "PolicyName": "alex_inline_policy",
+            "PolicyArn": "arn:aws:iam::262164343754:policy/alex_inline_policy"
+        }
+    ]
+}
