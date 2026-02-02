@@ -1,0 +1,22 @@
+# Mac
+.DS_Store
+
+# AWS Secrets - NEVER commit these
+*.pem
+*.env
+*credentials*
+*secret*
+*.key
+
+# Terraform (if you use it in Lab 1c)
+*.tfstate
+*.tfstate.*
+.terraform/
+*.tfvars
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log

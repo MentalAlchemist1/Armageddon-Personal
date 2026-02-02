@@ -206,7 +206,6 @@ aws ssm put-parameter --name "/lab/db/name" --value "labdb" --type String
 }
 ```
 
-![[Screenshot 2026-02-01 at 8.33.45 PM.png]]
 
 **What does "Version: 1" mean?**
 Parameter Store tracks versions. If you update a parameter, it becomes Version 2. This lets you roll back to previous values if needed - like "undo" for your configuration!
@@ -259,7 +258,6 @@ aws ssm get-parameters \
 }
 ```
 
-![[Screenshot 2026-02-01 at 8.41.20 PM.png]]
 
 > ✅ **VERIFICATION CHECKLIST**
 > 
@@ -312,7 +310,6 @@ The `aws logs create-log-group` command is a **silent success** - it returns **n
 Verification wanted?
 aws logs describe-log-groups --log-group-name-prefix /aws/ec2/lab-rds-app
 
-![[Screenshot 2026-02-01 at 8.46.16 PM.png]]
 
 ### Why This Naming Convention?
 
@@ -358,7 +355,6 @@ aws logs describe-log-groups --log-group-name-prefix /aws/ec2/lab-rds-app --quer
 |  /aws/ec2/lab-rds-app   |  7          |
 +-------------------------+-------------+
 
-![[Screenshot 2026-02-01 at 8.51.26 PM.png]]
 ### Common Retention Periods
 
 | Days | Use Case |
@@ -391,8 +387,6 @@ aws logs describe-log-groups --log-group-name-prefix /aws/ec2/lab-rds-app
     ]
 }
 ```
-
-![[Screenshot 2026-02-01 at 8.56.03 PM.png]]
 
 
 > ✅ **VERIFICATION CHECKLIST**
@@ -486,11 +480,7 @@ aws sts get-caller-identity --query "Account" --output text
 > 3. You will NOT receive alerts until confirmed!
 
 ---
-![[Screenshot 2026-02-01 at 9.14.22 PM.png]]
 
-![[Screenshot 2026-02-01 at 9.15.03 PM.png]]
-
-![[Screenshot 2026-02-01 at 9.15.39 PM.png]]
 ## Step 3.3: Verify Subscription
 
 ### The Command
@@ -514,7 +504,6 @@ aws sns list-subscriptions-by-topic \
 }
 ```
 
-![[Screenshot 2026-02-01 at 9.17.02 PM.png]]
 
 > ✅ **VERIFICATION CHECKLIST**
 > 
@@ -611,9 +600,6 @@ YOU get an email at 3 AM 📧🔔
 aws cloudwatch describe-alarms --alarm-names lab-db-connection-failure
 ```
 
-### Expected Output
-
-![[Screenshot 2026-02-01 at 9.24.41 PM.png]]
 
 > ✅ **VERIFICATION CHECKLIST**
 > 
@@ -712,7 +698,6 @@ aws iam list-attached-role-policies --role-name lab-ec2-app-role
 }
 ```
 
-![[Screenshot 2026-02-01 at 9.33.52 PM.png]]
 
 > ✅ **VERIFICATION CHECKLIST**
 > 
@@ -1097,7 +1082,6 @@ sudo systemctl status rdsapp
      Active: active (running) since ...
 ```
 
-![[Screenshot 2026-02-01 at 10.07.55 PM.png]]
 ### If Something Goes Wrong
 
 ```bash
@@ -1132,7 +1116,6 @@ curl http://<EC2_PUBLIC_IP>/list
 curl "http://<EC2_PUBLIC_IP>/"
 ```
 
-![[Screenshot 2026-02-01 at 10.28.54 PM.png]]
 
 At this point, everything should work!🔥 **EC2 → Parameter Store → Secrets Manager → RDS → Response** - the entire chain is working!
 
@@ -1191,10 +1174,6 @@ json
 {"status": "healthy", "app": "lab1b-rdsapp"}
 ```
 
-Proof of App Running!
-
-![[Screenshot 2026-02-01 at 10.59.12 PM.png]]
-
 | Signal                                                      | Meaning              |
 | ----------------------------------------------------------- | -------------------- |
 | **`active (running)`**                                      | App is alive!        |
@@ -1213,7 +1192,6 @@ json
 ```json
 {"app":"lab1b-rdsapp","status":"healthy"}
 ```
-![[Screenshot 2026-02-01 at 11.02.10 PM.png]]
 
 **Part 6 Complete!**
 
@@ -1282,8 +1260,6 @@ At this point, you can verify RDS is stopping, if you want:
 
 Should return: `stopping` or `stopped`
 
-![[Screenshot 2026-02-01 at 11.23.13 PM.png]]
-
 ### Generate Errors
 
 Hit the application several times to generate connection failures:
@@ -1295,7 +1271,6 @@ curl http://<EC2_PUBLIC_IP>/list
 curl http://<EC2_PUBLIC_IP>/list
 ```
 
-![[Screenshot 2026-02-01 at 11.27.54 PM.png]]
 ### Wait for Alert
 
 **Wait 5-10 minutes** for:
@@ -1307,9 +1282,6 @@ After the curl failures, check alarm state:
 *aws cloudwatch describe-alarms --alarm-names lab-db-connection-failure --query "MetricAlarms[].StateValue" --output text --region us-west-2
 
 It should change from `OK` → `ALARM`
-![[Screenshot 2026-02-01 at 11.30.47 PM.png]]
-
-![[Screenshot 2026-02-01 at 11.28.57 PM.png]]
 
 ## 🎉 INCIDENT SIMULATION SUCCESS!
 
@@ -1322,9 +1294,6 @@ You just experienced a **real-world incident response scenario**:
 |Metrics published|✅ DBConnectionErrors fired|
 |Alarm triggered|✅ State → ALARM|
 |Notification sent|✅ Email received|
-
-![[CloudWatch Alarms.png]]
-
 
 # INCIDENT RUNBOOK
 
@@ -1362,7 +1331,6 @@ aws cloudwatch describe-alarms --alarm-names lab-db-connection-failure --query "
 aws logs filter-log-events --log-group-name /aws/ec2/lab-rds-app --filter-pattern "DB_CONNECTION_FAILURE"
 ```
 
-![[Screenshot 2026-02-01 at 11.36.38 PM.png]]
 
 ### 2.2 Classify the Failure Type
 
@@ -1387,7 +1355,6 @@ aws ssm get-parameters --names /lab/db/endpoint /lab/db/port /lab/db/name --with
 ```
 
 **Verify:** Values match your RDS instance.
-![[Screenshot 2026-02-01 at 11.37.53 PM.png]]
 ### 3.2 Check Secrets Manager
 
 ```bash
@@ -1396,7 +1363,7 @@ aws secretsmanager get-secret-value --secret-id lab/rds/mysql
 
 **Verify:** Credentials are present and correct.
 
-![[Screenshot 2026-02-01 at 11.39.15 PM.png]]
+
 > ✅ **This rules out credential drift as the cause.**
 
 ---
@@ -1428,7 +1395,7 @@ aws rds describe-db-instances --db-instance-identifier lab-mysql --query "DBInst
 ```
 
 **Expected (for our simulation):** `"stopped"`
-![[Screenshot 2026-02-01 at 11.40.25 PM.png]]
+
 ### 5.2 Start the RDS Instance
 
 ```bash
@@ -1445,9 +1412,6 @@ aws rds describe-db-instances --db-instance-identifier lab-mysql --query "DBInst
 ```
 
 **Status progression:** `stopped` → `starting` → `available`
-![[Screenshot 2026-02-01 at 11.42.43 PM.png]]
-
-![[Screenshot 2026-02-01 at 11.47.39 PM 1.png]]
 
 ---
 
@@ -1461,7 +1425,6 @@ curl http://<EC2_PUBLIC_IP>/list
 ```
 
 **Expected:** Application returns data successfully.
-![[Screenshot 2026-02-01 at 11.51.05 PM.png]]
 ### 6.2 Verify Alarm Clears
 
 ```bash
@@ -1470,7 +1433,6 @@ aws cloudwatch describe-alarms --alarm-names lab-db-connection-failure --query "
 
 **Expected:** `["OK"]`
 
-![[Screenshot 2026-02-01 at 11.52.40 PM.png]]
 
 > ✅ **INCIDENT RESOLVED**
 
