@@ -1,0 +1,26 @@
+# Terraform files to ignore
+terraform.tfvars
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Crash log files
+crash.log
+crash.*.log
+
+# Plan files
+*.tfplan
+
+# Override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Sensitive variable files
+*.auto.tfvars
+*.auto.tfvars.json
+
+# macOS
+.DS_Store
