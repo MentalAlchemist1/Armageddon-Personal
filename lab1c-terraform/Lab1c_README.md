@@ -1,20 +1,3 @@
----
-title: "Lab 1C: Terraform Infrastructure as Code"
-subtitle: "Enhanced Socratic Q&A Guide"
-course: "SEIR Foundations"
-tags:
-  - aws
-  - terraform
-  - infrastructure-as-code
-  - ec2
-  - rds
-  - secrets-manager
-  - cloudwatch
-  - iam
-created: 2024-01-01
-status: complete
----
-
 # Lab 1C: Terraform Infrastructure as Code
 
 ## Enhanced Step-by-Step Guide with Embedded Socratic Q&A
