@@ -21,11 +21,6 @@ output "rds_endpoint" {
   value       = aws_db_instance.main.endpoint
 }
 
-output "app_url" {
-  description = "URL to access the application"
-  value       = "http://${aws_instance.app.public_ip}"
-}
-
 output "secret_arn" {
   description = "ARN of the Secrets Manager secret"
   value       = aws_secretsmanager_secret.db_credentials.arn

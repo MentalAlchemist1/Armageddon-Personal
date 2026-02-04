@@ -55,3 +55,27 @@ variable "alert_email" {
   description = "Email address for SNS alerts"
   type        = string
 }
+
+# ====================
+# Bonus-B Variables
+# ====================
+
+variable "app_subdomain" {
+  description = "Subdomain for the application (e.g., app)"
+  type        = string
+  default     = "www"
+}
+
+variable "app_port" {
+  description = "Port the Flask app listens on"
+  type        = number
+  default     = 80
+}
+
+variable "domain_name" {
+  default = "wheresjack.com"
+}
+
+variable "acm_certificate_arn" {
+  default = "arn:aws:acm:us-west-2:262164343754:certificate/51fd15f7-16f4-450d-abb0-280fe573f799"
+}
