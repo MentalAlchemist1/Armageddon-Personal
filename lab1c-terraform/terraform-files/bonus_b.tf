@@ -388,3 +388,33 @@ resource "aws_route53_record" "app" {
     evaluate_target_health = true
   }
 }
+
+# ==============================================
+# HTTPS LISTENER (Updated for DNS Validation)
+# ==============================================
+
+# Explanation: The HTTPS listener is the real hangar bay—TLS terminates here, 
+# then traffic flows to private targets. It MUST wait for the certificate 
+# to be validated, or it fails with "certificate not yet issued."
+
+resource "aws_lb_listener" "chewbacca_https_listener01" {
+  load_balancer_arn = aws_lb.chewbacca_alb01.arn
+  port              = 443
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+  
+  # Use the certificate ARN directly
+  certificate_arn   = aws_acm_certificate.chewbacca_acm_cert01.arn
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.chewbacca_tg01.arn
+  }
+
+  # CRITICAL: Wait for DNS validation to complete!
+  # Without this, Terraform might try to create the listener before 
+  # the certificate is issued, causing failures.
+  depends_on = [
+    aws_acm_certificate_validation.chewbacca_acm_validation01_dns
+  ]
+}

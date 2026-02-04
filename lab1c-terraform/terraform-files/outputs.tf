@@ -40,3 +40,25 @@ output "list_url" {
   description = "URL to list all notes"
   value       = "http://${aws_instance.app.public_ip}/list"
 }
+
+# ==============================================
+# ROUTE53 + DNS OUTPUTS
+# ==============================================
+
+# Explanation: Outputs are the nav computer readout—Chewbacca needs 
+# coordinates that humans can paste into browsers.
+
+output "chewbacca_route53_zone_id" {
+  description = "Route53 Hosted Zone ID"
+  value       = local.chewbacca_zone_id
+}
+
+output "chewbacca_app_url_https" {
+  description = "HTTPS URL for the application"
+  value       = "https://${var.app_subdomain}.${var.domain_name}"
+}
+
+output "chewbacca_route53_name_servers" {
+  description = "Name servers for the hosted zone (update your domain registrar!)"
+  value       = var.manage_route53_in_terraform ? aws_route53_zone.chewbacca_zone01[0].name_servers : ["Using existing zone - check console for NS records"]
+}
