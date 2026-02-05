@@ -62,3 +62,38 @@ output "chewbacca_route53_name_servers" {
   description = "Name servers for the hosted zone (update your domain registrar!)"
   value       = var.manage_route53_in_terraform ? aws_route53_zone.chewbacca_zone01[0].name_servers : ["Using existing zone - check console for NS records"]
 }
+
+# ============================================
+# WAF LOGGING OUTPUTS (Bonus E)
+# Append these to your existing outputs.tf
+# ============================================
+
+output "waf_log_destination" {
+  description = "Which WAF log destination is active"
+  value       = var.waf_log_destination
+}
+
+output "waf_cw_log_group_name" {
+  description = "CloudWatch Log Group name for WAF logs (if cloudwatch destination)"
+  value       = var.waf_log_destination == "cloudwatch" ? aws_cloudwatch_log_group.waf_logs[0].name : null
+}
+
+output "waf_cw_log_group_arn" {
+  description = "CloudWatch Log Group ARN for WAF logs (if cloudwatch destination)"
+  value       = var.waf_log_destination == "cloudwatch" ? aws_cloudwatch_log_group.waf_logs[0].arn : null
+}
+
+output "waf_logs_s3_bucket" {
+  description = "S3 bucket name for WAF logs (if s3 destination)"
+  value       = var.waf_log_destination == "s3" ? aws_s3_bucket.waf_logs[0].bucket : null
+}
+
+output "waf_firehose_name" {
+  description = "Firehose stream name for WAF logs (if firehose destination)"
+  value       = var.waf_log_destination == "firehose" ? aws_kinesis_firehose_delivery_stream.waf_logs[0].name : null
+}
+
+output "waf_firehose_dest_bucket" {
+  description = "S3 bucket where Firehose delivers WAF logs (if firehose destination)"
+  value       = var.waf_log_destination == "firehose" ? aws_s3_bucket.waf_firehose_dest[0].bucket : null
+}

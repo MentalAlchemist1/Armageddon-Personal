@@ -163,3 +163,25 @@ variable "alb_access_logs_prefix" {
   type        = string
   default     = "alb-access-logs"
 }
+
+# ============================================
+# WAF LOGGING VARIABLES (Bonus E)
+# Append these to your existing variables.tf
+# ============================================
+
+variable "waf_log_destination" {
+  description = "Choose ONE destination per WebACL: cloudwatch | s3 | firehose"
+  type        = string
+  default     = "cloudwatch"
+
+  validation {
+    condition     = contains(["cloudwatch", "s3", "firehose"], var.waf_log_destination)
+    error_message = "waf_log_destination must be one of: cloudwatch, s3, firehose"
+  }
+}
+
+variable "waf_log_retention_days" {
+  description = "Retention for WAF CloudWatch log group (only used if destination=cloudwatch)."
+  type        = number
+  default     = 14
+}
