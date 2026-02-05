@@ -66,6 +66,15 @@ resource "aws_lb" "main" {
 
   enable_deletion_protection = false # Set true in production
 
+  # ============================================================
+  # Access Logs: Chewbacca keeps flight logs for incident response
+  # ============================================================
+  access_logs {
+    bucket  = var.enable_alb_access_logs ? aws_s3_bucket.chewbacca_alb_logs_bucket01[0].bucket : ""
+    prefix  = var.alb_access_logs_prefix
+    enabled = var.enable_alb_access_logs
+  }
+  
   tags = merge(local.common_tags, {
     Name = "${local.name_prefix}-alb01"
   })
@@ -109,18 +118,22 @@ resource "aws_lb_listener" "https" {
   port              = 443
   protocol          = "HTTPS"
   ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
-  certificate_arn   = var.acm_certificate_arn
+  certificate_arn   = aws_acm_certificate.chewbacca_acm_cert01.arn
 
   default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.main.arn
   }
 
+  # Wait for certificate validation before creating listener
+  depends_on = [
+    aws_acm_certificate_validation.chewbacca_acm_validation01_dns
+  ]
+
   tags = merge(local.common_tags, {
     Name = "${local.name_prefix}-https-listener01"
   })
 }
-
 # --- HTTP Listener (80) - Redirect to HTTPS ---
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.main.arn
@@ -371,14 +384,9 @@ resource "aws_cloudwatch_metric_alarm" "alb_5xx" {
 # Route53 DNS
 # ====================
 
-# Reference your existing hosted zone
-data "aws_route53_zone" "main" {
-  name = var.domain_name
-}
-
 # Point app subdomain to ALB
 resource "aws_route53_record" "app" {
-  zone_id = data.aws_route53_zone.main.zone_id
+  zone_id = local.chewbacca_zone_id
   name    = "${var.app_subdomain}.${var.domain_name}" # app.wheresjack.com
   type    = "A"
 
@@ -387,34 +395,4 @@ resource "aws_route53_record" "app" {
     zone_id                = aws_lb.main.zone_id
     evaluate_target_health = true
   }
-}
-
-# ==============================================
-# HTTPS LISTENER (Updated for DNS Validation)
-# ==============================================
-
-# Explanation: The HTTPS listener is the real hangar bay—TLS terminates here, 
-# then traffic flows to private targets. It MUST wait for the certificate 
-# to be validated, or it fails with "certificate not yet issued."
-
-resource "aws_lb_listener" "chewbacca_https_listener01" {
-  load_balancer_arn = aws_lb.chewbacca_alb01.arn
-  port              = 443
-  protocol          = "HTTPS"
-  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
-  
-  # Use the certificate ARN directly
-  certificate_arn   = aws_acm_certificate.chewbacca_acm_cert01.arn
-
-  default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.chewbacca_tg01.arn
-  }
-
-  # CRITICAL: Wait for DNS validation to complete!
-  # Without this, Terraform might try to create the listener before 
-  # the certificate is issued, causing failures.
-  depends_on = [
-    aws_acm_certificate_validation.chewbacca_acm_validation01_dns
-  ]
 }

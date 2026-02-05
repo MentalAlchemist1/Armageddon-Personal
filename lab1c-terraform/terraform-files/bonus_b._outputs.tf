@@ -34,5 +34,5 @@ output "target_group_arn" {
 
 output "hosted_zone_id" {
   description = "Route53 Hosted Zone ID"
-  value       = data.aws_route53_zone.main.zone_id
+  value       = local.chewbacca_zone_id
 }

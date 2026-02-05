@@ -87,13 +87,13 @@ variable "acm_certificate_arn" {
 variable "manage_route53_in_terraform" {
   description = "If true, create/manage Route53 hosted zone in Terraform. If false, use existing zone."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "route53_hosted_zone_id" {
   description = "If manage_route53_in_terraform=false, provide existing Hosted Zone ID."
   type        = string
-  default     = ""
+  default     = "Z08529463796GXWJTC93E"
 }
 
 variable "environment" {
@@ -148,14 +148,18 @@ resource "aws_acm_certificate_validation" "chewbacca_acm_validation01_dns" {
 # "app.chewbacca-growl.com" now points to your ALB. 
 # Visitors see your domain, not AWS's ugly URL.
 
-resource "aws_route53_record" "chewbacca_app_alias01" {
-  zone_id = local.chewbacca_zone_id
-  name    = local.chewbacca_app_fqdn
-  type    = "A"
+# ============================================================
+# Bonus D: ALB Access Logs Configuration
+# ============================================================
 
-  alias {
-    name                   = aws_lb.chewbacca_alb01.dns_name
-    zone_id                = aws_lb.chewbacca_alb01.zone_id
-    evaluate_target_health = true
-  }
+variable "enable_alb_access_logs" {
+  description = "Enable ALB access logging to S3."
+  type        = bool
+  default     = true
+}
+
+variable "alb_access_logs_prefix" {
+  description = "S3 prefix for ALB access logs."
+  type        = string
+  default     = "alb-access-logs"
 }

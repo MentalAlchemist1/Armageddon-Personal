@@ -1,3 +1,28 @@
+# ==============================================
+# ACM CERTIFICATE
+# ==============================================
+
+# Explanation: This is your TLS certificate - the padlock icon 
+# users see in their browser. ACM provides it free and auto-renews.
+# It's like getting an official ID card that proves "yes, this 
+# really is wheresjack.com and it's safe to talk to."
+
+resource "aws_acm_certificate" "chewbacca_acm_cert01" {
+  domain_name               = var.domain_name
+  subject_alternative_names = ["*.${var.domain_name}"]
+  validation_method         = "DNS"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  tags = {
+    Name        = "${local.name_prefix}-acm-cert01"
+    Environment = var.environment
+    ManagedBy   = "Terraform"
+  }
+}
+
 ############################################
 # BONUS-C: Route53 DNS + ACM Validation
 ############################################
