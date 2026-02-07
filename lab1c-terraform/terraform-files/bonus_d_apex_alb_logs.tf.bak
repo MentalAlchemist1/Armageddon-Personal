@@ -118,17 +118,17 @@ resource "aws_s3_bucket_public_access_block" "chewbacca_alb_logs_public_block01"
 # ------------------------------------------------------------
 # Explanation: This lets users type "chewbacca-growl.com" (no subdomain)
 # and still reach your ALB. Humans forget subdomains; this catches them.
-# resource "aws_route53_record" "chewbacca_apex01" {
-#   zone_id = local.chewbacca_zone_id
-#   name    = var.domain_name
-#   type    = "A"
-# 
-#   alias {
-#     name                   = aws_lb.main.dns_name
-#     zone_id                = aws_lb.main.zone_id
-#     evaluate_target_health = true
-#   }
-# }
+resource "aws_route53_record" "chewbacca_apex01" {
+  zone_id = local.chewbacca_zone_id
+  name    = var.domain_name
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.main.dns_name
+    zone_id                = aws_lb.main.zone_id
+    evaluate_target_health = true
+  }
+}
 
 # ============================================================
 # OUTPUTS

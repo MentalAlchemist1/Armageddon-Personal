@@ -1,0 +1,79 @@
+[0m[1mdata.aws_availability_zones.available: Reading...[0m[0m
+[0m[1maws_secretsmanager_secret.db_credentials: Refreshing state... [id=arn:aws:secretsmanager:us-west-2:262164343754:secret:chewbacca/rds/mysql-amrm5K][0m
+[0m[1maws_ssm_parameter.db_name: Refreshing state... [id=/lab/db/name][0m
+[0m[1mdata.aws_ami.amazon_linux: Reading...[0m[0m
+[0m[1maws_sns_topic.alerts: Refreshing state... [id=arn:aws:sns:us-west-2:262164343754:chewbacca-alerts][0m
+[0m[1mdata.aws_iam_policy_document.ec2_assume_role: Reading...[0m[0m
+[0m[1maws_cloudwatch_log_group.app: Refreshing state... [id=/aws/ec2/chewbacca-app][0m
+[0m[1maws_vpc.main: Refreshing state... [id=vpc-0690ddd826f0ce7b1][0m
+[0m[1mdata.aws_iam_policy_document.ec2_assume_role: Read complete after 0s [id=2851119427][0m
+[0m[1maws_iam_role.ec2_app: Refreshing state... [id=chewbacca-ec2-role01][0m
+[0m[1maws_iam_instance_profile.ec2_app: Refreshing state... [id=chewbacca-instance-profile01][0m
+[0m[1mdata.aws_availability_zones.available: Read complete after 0s [id=us-west-2][0m
+[0m[1maws_sns_topic_subscription.email: Refreshing state... [id=arn:aws:sns:us-west-2:262164343754:chewbacca-alerts:a3069c03-dfa2-4232-b097-1d3372c473c7][0m
+[0m[1maws_cloudwatch_metric_alarm.db_connection_failure: Refreshing state... [id=chewbacca-db-connection-failure][0m
+[0m[1maws_cloudwatch_log_metric_filter.db_errors: Refreshing state... [id=chewbacca-db-connection-errors][0m
+[0m[1mdata.aws_iam_policy_document.ec2_permissions: Reading...[0m[0m
+[0m[1mdata.aws_iam_policy_document.ec2_permissions: Read complete after 0s [id=1403115780][0m
+[0m[1maws_iam_role_policy.ec2_permissions: Refreshing state... [id=chewbacca-ec2-role01:chewbacca-ec2-permissions][0m
+[0m[1mdata.aws_ami.amazon_linux: Read complete after 1s [id=ami-01c925d55545d0c17][0m
+[0m[1maws_internet_gateway.main: Refreshing state... [id=igw-0a2e73278afddf2d4][0m
+[0m[1maws_subnet.public[0]: Refreshing state... [id=subnet-00551d8a89ed3a87d][0m
+[0m[1maws_subnet.private[1]: Refreshing state... [id=subnet-034c0b7cd8e181b64][0m
+[0m[1maws_subnet.public[1]: Refreshing state... [id=subnet-062e37d8a0f7cd8de][0m
+[0m[1maws_subnet.private[0]: Refreshing state... [id=subnet-03933dda57fcea901][0m
+[0m[1maws_security_group.ec2: Refreshing state... [id=sg-0a3758f5899fa6843][0m
+[0m[1maws_route_table.public: Refreshing state... [id=rtb-0180f349002ecb5e2][0m
+[0m[1maws_eip.nat: Refreshing state... [id=eipalloc-00e4be25409d20edd][0m
+[0m[1maws_security_group.rds: Refreshing state... [id=sg-04993d18f94c5a4c4][0m
+[0m[1maws_route_table_association.public[0]: Refreshing state... [id=rtbassoc-0d1162b41345a6c5d][0m
+[0m[1maws_route_table_association.public[1]: Refreshing state... [id=rtbassoc-0b222c590677313cb][0m
+[0m[1maws_db_subnet_group.main: Refreshing state... [id=chewbacca-db-subnet-group][0m
+[0m[1maws_nat_gateway.main: Refreshing state... [id=nat-0bcce8d81b238d342][0m
+[0m[1maws_route_table.private: Refreshing state... [id=rtb-0e11ed096a9bdac4d][0m
+[0m[1maws_route_table_association.private[0]: Refreshing state... [id=rtbassoc-08af413452fba2c15][0m
+[0m[1maws_route_table_association.private[1]: Refreshing state... [id=rtbassoc-04c5dc98d176af013][0m
+[0m[1maws_db_instance.main: Refreshing state... [id=db-K7DZVX2GVZCIWT6EG7VMOONQGA][0m
+[0m[1maws_secretsmanager_secret_version.db_credentials: Refreshing state... [id=arn:aws:secretsmanager:us-west-2:262164343754:secret:chewbacca/rds/mysql-amrm5K|terraform-20260203002823823600000005][0m
+[0m[1maws_ssm_parameter.db_port: Refreshing state... [id=/lab/db/port][0m
+[0m[1maws_ssm_parameter.db_endpoint: Refreshing state... [id=/lab/db/endpoint][0m
+[0m[1maws_instance.app: Refreshing state... [id=i-01992ef0d85c1b5bf][0m
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  [33m~[0m update in-place[0m
+
+Terraform will perform the following actions:
+
+[1m  # aws_instance.app[0m will be updated in-place
+[0m  [33m~[0m[0m resource "aws_instance" "app" {
+        id                                   = "i-01992ef0d85c1b5bf"
+      [33m~[0m[0m public_dns                           = "ec2-16-144-150-199.us-west-2.compute.amazonaws.com" -> (known after apply)
+      [33m~[0m[0m public_ip                            = "16.144.150.199" -> (known after apply)
+        tags                                 = {
+            "Environment" = "lab"
+            "ManagedBy"   = "terraform"
+            "Name"        = "chewbacca-ec201"
+            "Project"     = "chewbacca"
+        }
+      [33m~[0m[0m user_data                            = "963e09b40cf9a376c9ce051070aedb58c49b5ece" [33m->[0m[0m "1e5bd6fb9c16ea9c86259b91ea788b29499c77fb"
+        [90m# (30 unchanged attributes hidden)[0m[0m
+
+        [90m# (8 unchanged blocks hidden)[0m[0m
+    }
+
+[1mPlan:[0m 0 to add, 1 to change, 0 to destroy.
+[0m
+Changes to Outputs:
+  [33m~[0m[0m app_url        = "http://16.144.150.199" -> (known after apply)
+  [33m~[0m[0m ec2_public_dns = "ec2-16-144-150-199.us-west-2.compute.amazonaws.com" -> (known after apply)
+  [33m~[0m[0m ec2_public_ip  = "16.144.150.199" -> (known after apply)
+  [33m~[0m[0m init_url       = "http://16.144.150.199/init" -> (known after apply)
+  [33m~[0m[0m list_url       = "http://16.144.150.199/list" -> (known after apply)
+[90m
+─────────────────────────────────────────────────────────────────────────────[0m
+
+Saved the plan to: lab1c-plan.tfplan
+
+To perform exactly these actions, run the following command to apply:
+    terraform apply "lab1c-plan.tfplan"

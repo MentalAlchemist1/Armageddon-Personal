@@ -8,24 +8,6 @@ resource "aws_security_group" "alb" {
   description = "Security group for ALB - allows HTTP/HTTPS from internet"
   vpc_id      = aws_vpc.main.id
 
-  # HTTPS from anywhere (internet-facing)
-  ingress {
-    description = "HTTPS from internet"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  # HTTP from anywhere (for redirect to HTTPS)
-  ingress {
-    description = "HTTP from internet (redirect to HTTPS)"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
   # Outbound to EC2 targets
   egress {
     description     = "To EC2 targets on app port"
