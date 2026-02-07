@@ -1,0 +1,18 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2822
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 aws cloudfront get-distribution --id EGSYE9Z9V58UT \\\
+  --query "Distribution.\{DomainName:DomainName,Origins:DistributionConfig.Origins.Items[].DomainName,WAF:DistributionConfig.WebACLId\}" \\\
+  --output json\
+\{\
+    "DomainName": "dilw2rrp8jl8g.cloudfront.net",\
+    "Origins": [\
+        "chewbacca-alb01-1094761683.us-west-2.elb.amazonaws.com"\
+    ],\
+    "WAF": "arn:aws:wafv2:us-east-1:262164343754:global/webacl/chewbacca-cf-waf/e707c954-ce80-4292-9f90-d244e6b635a9"\
+\}\
+}

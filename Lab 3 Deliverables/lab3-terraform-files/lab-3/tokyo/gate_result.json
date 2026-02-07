@@ -1,0 +1,46 @@
+{
+  "schema_version": "2.0",
+  "gate": "lab2_alb",
+  "timestamp_utc": "2026-02-07T02:29:20Z",
+  "badge": "RED",
+  "status": "FAIL",
+  "exit_code": 2,
+  "inputs": {
+    "origin_region": "us-west-2",
+    "cloudfront_distribution_id": "EGSYE9Z9V58UT",
+    "domain_name": "wheresjack.com",
+    "route53_zone_id": "Z08529463796GXWJTC93E",
+    "alb_arn": "arn:aws:elasticloadbalancing:us-west-2:262164343754:loadbalancer/app/chewbacca-alb01/70d5b3ab0d97d281",
+    "alb_sg_id": "sg-02bddb7d9e79f7d02"
+  },
+  "observed": {
+    "caller_arn": "arn:aws:iam::262164343754:user/AWSCLI",
+    "cloudfront_domain": "dilw2rrp8jl8g.cloudfront.net",
+    "cloudfront_status": "Deployed",
+    "alb_dns": "chewbacca-alb01-1094761683.us-west-2.elb.amazonaws.com",
+    "alb_scheme": "internet-facing"
+  },
+  "rollup": {
+    "details": [
+"PASS: AWS credentials OK (caller=arn:aws:iam::262164343754:user/AWSCLI).","PASS: CloudFront Enabled=True.","PASS: CloudFront Status=Deployed.","PASS: CloudFront aliases include wheresjack.com.","PASS: CloudFront ACMCertificateArn present.","PASS: Minimum TLS includes TLSv1.2 (TLSv1.2_2021).","PASS: ACM cert ISSUED (us-east-1).","PASS: ACM cert covers wheresjack.com.","PASS: Route53 A alias HostedZoneId is CloudFront (Z2FDTNDATAQYW2).","PASS: Route53 AAAA alias HostedZoneId is CloudFront (Z2FDTNDATAQYW2).","PASS: CloudFront logging enabled (bucket=chewbacca-cf-logs-262164343754.s3.us-west-2.amazonaws.com).","PASS: ALB exists (DNS=chewbacca-alb01-1094761683.us-west-2.elb.amazonaws.com).","PASS: CloudFront origin includes ALB DNSName.","PASS: ALB has listener on port 443.","PASS: ALB has listener on port 80.","PASS: ALB SG sg-02bddb7d9e79f7d02 not world-open on port 443.","PASS: ALB SG sg-02bddb7d9e79f7d02 not world-open on port 80.","INFO: STRICT CloudFront-only ingress check disabled (set REQUIRE_CLOUDFRONT_ONLY_INGRESS=true to enforce)."],
+    "warnings": [
+"WARN: ALB internal requirement disabled; public ALB weakens 'CloudFront-only' guarantee."],
+    "failures": [
+"FAIL: WAF WebACL not associated with CloudFront.","FAIL: Route53 A alias target mismatch (expected=dilw2rrp8jl8g.cloudfront.net actual=dilw2rrp8jl8g.cloudfront.net.).","FAIL: Route53 AAAA alias target mismatch (expected=dilw2rrp8jl8g.cloudfront.net actual=dilw2rrp8jl8g.cloudfront.net.)."]
+  },
+  "clocks": {
+    "first_seen_utc": "2026-02-07T01:53:48Z",
+    "last_seen_utc": "2026-02-07T02:27:44Z"
+  },
+  "sla": {
+    "target_hours": 24,
+    "due_utc": "",
+    "breached": false,
+    "age_seconds": "",
+    "remaining_seconds": ""
+  },
+  "artifacts": {
+    "badge_txt": "badge.txt",
+    "pr_comment_md": "pr_comment.md"
+  }
+}

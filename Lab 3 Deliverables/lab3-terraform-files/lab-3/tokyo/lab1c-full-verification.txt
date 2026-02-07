@@ -1,0 +1,86 @@
+=== LAB 1C VERIFICATION EVIDENCE ===
+Date: Mon Feb  2 20:14:38 EST 2026
+Region: us-west-2
+
+=== TERRAFORM FILES ===
+-rw-r--r--@ 1 alexarmour  staff  1686 Feb  2 19:21 cloudwatch.tf
+-rw-r--r--@ 1 alexarmour  staff  3816 Feb  2 19:57 ec2.tf
+-rw-r--r--@ 1 alexarmour  staff  1995 Feb  2 19:21 iam.tf
+-rw-r--r--@ 1 alexarmour  staff  1115 Feb  2 18:55 outputs.tf
+-rw-r--r--@ 1 alexarmour  staff   678 Feb  2 19:21 parameters.tf
+-rw-r--r--@ 1 alexarmour  staff   131 Feb  2 18:34 providers.tf
+-rw-r--r--@ 1 alexarmour  staff  1235 Feb  2 19:21 rds.tf
+-rw-r--r--@ 1 alexarmour  staff   668 Feb  2 19:21 secrets.tf
+-rw-r--r--@ 1 alexarmour  staff  1458 Feb  2 19:21 security_groups.tf
+-rw-r--r--@ 1 alexarmour  staff  1275 Feb  2 18:39 variables.tf
+-rw-r--r--@ 1 alexarmour  staff   287 Feb  2 19:21 versions.tf
+-rw-r--r--@ 1 alexarmour  staff  3376 Feb  2 19:21 vpc.tf
+
+=== TERRAFORM STATE ===
+data.aws_ami.amazon_linux
+data.aws_availability_zones.available
+data.aws_iam_policy_document.ec2_assume_role
+data.aws_iam_policy_document.ec2_permissions
+aws_cloudwatch_log_group.app
+aws_cloudwatch_log_metric_filter.db_errors
+aws_cloudwatch_metric_alarm.db_connection_failure
+aws_db_instance.main
+aws_db_subnet_group.main
+aws_eip.nat
+aws_iam_instance_profile.ec2_app
+aws_iam_role.ec2_app
+aws_iam_role_policy.ec2_permissions
+aws_instance.app
+aws_internet_gateway.main
+aws_nat_gateway.main
+aws_route_table.private
+aws_route_table.public
+aws_route_table_association.private[0]
+aws_route_table_association.private[1]
+aws_route_table_association.public[0]
+aws_route_table_association.public[1]
+aws_secretsmanager_secret.db_credentials
+aws_secretsmanager_secret_version.db_credentials
+aws_security_group.ec2
+aws_security_group.rds
+aws_sns_topic.alerts
+aws_sns_topic_subscription.email
+aws_ssm_parameter.db_endpoint
+aws_ssm_parameter.db_name
+aws_ssm_parameter.db_port
+aws_subnet.private[0]
+aws_subnet.private[1]
+aws_subnet.public[0]
+aws_subnet.public[1]
+aws_vpc.main
+
+=== VPC ===
+[
+    "vpc-0690ddd826f0ce7b1"
+]
+=== RDS (Private Check) ===
+[
+    {
+        "Status": "available",
+        "Public": false
+    }
+]
+=== EC2 IAM Role ===
+[
+    "arn:aws:iam::262164343754:instance-profile/chewbacca-instance-profile01"
+]
+=== Secret ===
+"chewbacca/rds/mysql"
+=== Parameters ===
+[
+    "/lab/db/endpoint",
+    "/lab/db/name",
+    "/lab/db/port"
+]
+=== CloudWatch Alarm ===
+[
+    "chewbacca-db-connection-failure"
+]
+=== APP TEST ===
+3: lab1c_complete (2026-02-03 00:58:53)<br>2: infrastructure_as_code (2026-02-03 00:58:44)<br>1: terraform_rocks (2026-02-03 00:58:31)
+=== VERIFICATION COMPLETE ===
