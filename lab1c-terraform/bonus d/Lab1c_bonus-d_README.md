@@ -1,13 +1,12 @@
+# Lab 1C Bonus D: Zone Apex + ALB Access Logs
 
-# LAB 1C BONUS D: Zone Apex + ALB Access Logs to S3
-
-*Enhanced Socratic Q&A Guide*
+## Complete Step-by-Step Guide with Socratic Q&A
 
 ---
 
 > [!warning] **⚠️ PREREQUISITE**
 > Lab 1C Bonus C must be completed and verified before starting Bonus D. You must have:
-> - Route53 hosted zone configured
+> - Route53 hosted zone configured (either Terraform-managed or existing)
 > - ACM certificate validated
 > - ALB with TLS (HTTPS listener)
 > - WAF attached to ALB
@@ -17,74 +16,144 @@
 
 ## Lab Overview
 
-Bonus D adds two critical production capabilities:
+**What You'll Build:**
 
-| **Component** | **What It Does** | **Why It Matters** |
-|---------------|------------------|-------------------|
-| Zone Apex ALIAS | `chewbacca-growl.com` → ALB | Users can type the naked domain |
+| Component | What It Does | Why It Matters |
+|-----------|--------------|----------------|
+| Zone Apex ALIAS | `wheresjack.com` → ALB | Users can type the naked domain (no www) |
 | ALB Access Logs | Every request logged to S3 | Incident response forensics |
 
-**This is incident response fuel.** When things break at 3 AM, these logs tell you WHO did WHAT and WHEN.
+**Time Estimate:** 45-60 minutes (including troubleshooting)
 
 ---
 
-## Why Zone Apex Matters
+## PART 1: Pre-Flight Audit
 
-> [!note] **SOCRATIC Q&A**
-> 
-> ***Q:** We already have `app.chewbacca-growl.com` pointing to the ALB. Why do we need the naked domain (`chewbacca-growl.com`) to work too?*
-> 
-> **A (Explain Like I'm 10):** Imagine you tell your friend your address is "123 Main Street, Apartment 5." That's like `app.chewbacca-growl.com` — it's specific and works perfectly. But what if your friend just remembers "123 Main Street" and forgets the apartment number? They'd be stuck outside! The zone apex is like making sure people who forget the apartment number (the `app.` subdomain) still get to your door. Real humans type `chewbacca-growl.com` because it's easier to remember than `app.chewbacca-growl.com`.
-> 
-> **Evaluator Question:** *What's the technical challenge with pointing a zone apex to an ALB, and how does Route53 solve it?*
-> 
-> **Model Answer:** Zone apex (naked domain) cannot use a CNAME record per DNS RFC standards — CNAMEs at the apex break other record types like MX and TXT. Route53 solves this with ALIAS records, which are a Route53-specific feature that acts like a CNAME internally but appears as an A record externally. ALIAS records resolve directly to the ALB's IP addresses at query time, don't incur Route53 query charges, and support health checks. This is why AWS recommends ALIAS over CNAME for any AWS resource.
+Before adding new resources, we need to audit your existing codebase. This prevents the naming convention drift and duplicate resource errors that commonly occur when adding code from different lab guide versions.
 
 ---
 
-## Why ALB Access Logs Matter
+### Step 1.1: Identify Your ALB Resource Name
 
-> [!note] **SOCRATIC Q&A**
-> 
-> ***Q:** We already have CloudWatch metrics and alarms. Why do we need access logs too?*
-> 
-> **A (Explain Like I'm 10):** Imagine your house has a doorbell camera (CloudWatch metrics) that counts how many people came by and whether they rang the bell. But what if something weird happens — like someone keeps ringing and running away? The doorbell camera tells you "10 rings today" but not WHO did it, WHEN exactly, or which door they tried. Access logs are like having a security guard who writes down every single visitor: their name badge, what time they arrived, which door they tried, how long they waited, and whether they got in. When something goes wrong, you don't guess — you read the log and KNOW.
-> 
-> **Evaluator Question:** *What specific data do ALB access logs capture that CloudWatch metrics don't provide?*
-> 
-> **Model Answer:** ALB access logs capture per-request details that metrics aggregate away:
-> - **Client IP address** — who made the request (critical for attack attribution)
-> - **Request path and query string** — what they asked for
-> - **User-Agent header** — what client/browser they used
-> - **Response code** — success (2xx), redirect (3xx), client error (4xx), server error (5xx)
-> - **Target processing time** — how long your backend took
-> - **Request processing time** — total time including ALB overhead
-> - **SSL cipher and protocol** — TLS version and encryption used
-> - **Actions taken** — which listener rule matched, whether WAF blocked it
-> 
-> Metrics tell you "5xx errors spiked." Logs tell you "IP 203.0.113.50 sent 500 requests to /api/login in 60 seconds, all returned 503, target processing time was 30+ seconds suggesting backend overload."
+**Why This Matters:** Different lab versions use different naming conventions. You need to know YOUR ALB's Terraform resource name to reference it correctly.
 
----
+**Action:** Run this command from your `terraform-files` directory:
 
-## The S3 Bucket Policy Reality
+```bash
+grep -rn "resource \"aws_lb\"" *.tf
+```
 
-> [!note] **SOCRATIC Q&A**
+**Expected Output (example):**
+```
+bonus_b.tf:55:resource "aws_lb" "main" {
+```
+
+**Record your ALB resource name:** `_______________` (e.g., `aws_lb.main` or `aws_lb.chewbacca_alb01`)
+
+> [!note] **SOCRATIC Q&A: Why Different Names Exist**
 > 
-> ***Q:** Why does the S3 bucket need a special policy? Can't we just create a bucket and point ALB at it?*
+> ***Q:** Why might my ALB be named differently than what the lab guide shows?*
 > 
-> **A (Explain Like I'm 10):** Imagine you want the mail carrier (ALB) to put packages inside your garage (S3 bucket). But your garage has a lock! Just because YOU own the garage doesn't mean the mail carrier has the key. The bucket policy is like giving the mail carrier a special key that ONLY lets them drop off packages — they can't take anything out or look at what's already there. AWS ELB has its own AWS account that needs explicit permission to write to YOUR bucket.
+> **A (Explain Like I'm 10):** Imagine you and your friend both build the same LEGO set, but you name your spaceship "Millennium Falcon" and your friend names theirs "Space Cruiser." Both spaceships work the same way — the name is just a label YOU chose. In Terraform, the resource name (the part after `"aws_lb"`) is YOUR label. The lab guide might say `chewbacca_alb01`, but your code might use `main`. Both create an ALB — but you must use YOUR label consistently throughout your code.
 > 
-> **Evaluator Question:** *What's the ELB service account, and why does the bucket policy reference it?*
+> **Evaluator Question:** *What's the difference between a Terraform resource name and an AWS resource name?*
 > 
-> **Model Answer:** AWS runs Elastic Load Balancing from region-specific AWS-owned accounts. When ALB writes access logs, it's the ELB service account doing the write — not your account. The bucket policy must grant `s3:PutObject` permission to the ELB account ID for your region (e.g., `127311923021` for us-east-1). Without this policy, ALB cannot write logs even though you own both the ALB and the bucket. The `aws_elb_service_account` data source in Terraform automatically retrieves the correct account ID for your region.
+> **Model Answer:** The Terraform resource name (e.g., `aws_lb.main`) is an internal reference used only within your Terraform code — AWS never sees it. The AWS resource name (e.g., `chewbacca-alb01`) is the actual Name tag visible in the AWS Console. You reference Terraform names in your `.tf` files; you see AWS names in the Console and CLI output.
 
 ---
 
-## Terraform Implementation
+### Step 1.2: Identify Your Route53 Zone Configuration
 
-### Step 1: Add Variables
+**Why This Matters:** Your Route53 zone might be managed by Terraform OR it might be a pre-existing zone created by the domain registrar. You need to reference the correct zone ID.
 
-**Action:** Append to `variables.tf`:
+**Action:** Check if you have a data source or local for the zone ID:
+
+```bash
+grep -rn "zone_id\|chewbacca_zone_id\|aws_route53_zone" *.tf
+```
+
+**Action:** List your actual Route53 hosted zones in AWS:
+
+```bash
+aws route53 list-hosted-zones --query "HostedZones[*].[Id,Name,Config.PrivateZone]" --output table
+```
+
+**Record your findings:**
+- Zone ID: `_______________` (e.g., `Z08529463796GXWJTC93E`)
+- How it's referenced in Terraform: `_______________` (e.g., `local.chewbacca_zone_id` or `data.aws_route53_zone.main.zone_id`)
+
+> [!note] **SOCRATIC Q&A: Why Multiple Zones Can Exist**
+> 
+> ***Q:** Why might I have two hosted zones with the same domain name?*
+> 
+> **A (Explain Like I'm 10):** Imagine you have two phone books — one your parents made when you were born (the registrar zone) and one you made yourself (Terraform-created zone). Both have your family's name on the cover, but only ONE is the "real" phone book that people actually use to find your number. The "real" one is whichever zone your domain's NS (nameserver) records point to. If you add your phone number to the wrong book, nobody can reach you!
+> 
+> **Evaluator Question:** *How do you determine which hosted zone is "active" for a domain?*
+> 
+> **Model Answer:** Check the domain's NS records at the registrar level using `dig NS yourdomain.com`. The nameservers returned must match one of your hosted zones. In Route53, each hosted zone has unique NS records (shown in the zone's NS record set). The zone whose NS records match the registrar's NS delegation is the "active" zone where DNS records will actually resolve.
+
+---
+
+### Step 1.3: Check for Existing Route53 Records
+
+**Why This Matters:** You might already have a Route53 record for `www.yourdomain.com` from a previous lab step. Creating a duplicate causes Terraform to fail.
+
+**Action:** Find all Route53 record resources in your code:
+
+```bash
+grep -rn "aws_route53_record" *.tf
+```
+
+**Action:** List existing DNS records in your hosted zone:
+
+```bash
+aws route53 list-resource-record-sets \
+  --hosted-zone-id YOUR_ZONE_ID \
+  --query "ResourceRecordSets[?Type=='A'].[Name,Type]" \
+  --output table
+```
+
+**Record what exists:**
+- [ ] `www.yourdomain.com` A record exists in AWS
+- [ ] `www.yourdomain.com` A record exists in Terraform (which file? _______________)
+- [ ] Zone apex (`yourdomain.com`) A record exists in AWS
+- [ ] Zone apex A record exists in Terraform
+
+---
+
+### Step 1.4: Check for Duplicate Data Sources
+
+**Why This Matters:** If a data source like `aws_caller_identity` already exists in another file, declaring it again causes a "duplicate resource" error.
+
+**Action:** Check for existing data sources:
+
+```bash
+grep -rn "data \"aws_caller_identity\"" *.tf
+grep -rn "data \"aws_elb_service_account\"" *.tf
+grep -rn "data \"aws_route53_zone\"" *.tf
+```
+
+**Record what exists:**
+- `aws_caller_identity` in file: `_______________` (or "not found")
+- `aws_elb_service_account` in file: `_______________` (or "not found")
+- `aws_route53_zone` in file: `_______________` (or "not found")
+
+---
+
+## PART 2: Add Variables for ALB Logging
+
+### Step 2.1: Add Variables to `variables.tf`
+
+**Action:** Open `variables.tf` and append these variables at the end of the file:
+
+```bash
+# Open the file in your editor
+code variables.tf   # VS Code
+# OR
+nano variables.tf   # Terminal editor
+```
+
+**Add this code block:**
 
 ```hcl
 # ============================================================
@@ -104,7 +173,15 @@ variable "alb_access_logs_prefix" {
 }
 ```
 
-> [!note] **SOCRATIC Q&A**
+**Verification:** Save the file and run:
+
+```bash
+terraform validate
+```
+
+**Expected:** `Success! The configuration is valid.`
+
+> [!note] **SOCRATIC Q&A: Why Variables Instead of Hardcoding**
 > 
 > ***Q:** Why make `enable_alb_access_logs` a variable instead of just always enabling it?*
 > 
@@ -112,46 +189,57 @@ variable "alb_access_logs_prefix" {
 > 
 > **Evaluator Question:** *Why use a prefix for ALB logs instead of dumping them in the bucket root?*
 > 
-> **Model Answer:** Prefixes provide organizational structure and enable:
-> - **Multiple log sources** — same bucket can hold ALB logs, CloudFront logs, WAF logs under different prefixes
-> - **Lifecycle policies** — different retention rules per prefix (keep ALB logs 90 days, archive WAF logs 7 years)
-> - **IAM scoping** — restrict access to specific prefixes for different teams
-> - **S3 Select efficiency** — query specific prefixes without scanning entire bucket
-> - **Cost management** — easier to track storage costs per log type
-> 
-> A flat bucket becomes unmanageable quickly in production.
+> **Model Answer:** Prefixes provide organizational structure and enable: (1) Multiple log sources in one bucket (ALB, CloudFront, WAF under different prefixes), (2) Different lifecycle policies per prefix, (3) IAM scoping to restrict access by prefix, (4) S3 Select query efficiency, (5) Easier cost tracking per log type.
 
 ---
 
-### Step 2: Create the Terraform File
+## PART 3: Create the Bonus D Terraform File
 
-**Action:** Create `bonus_d_apex_alb_logs.tf`:
+### Step 3.1: Create `bonus_d_apex_alb_logs.tf`
+
+**Action:** Create a new file named `bonus_d_apex_alb_logs.tf`:
+
+```bash
+touch bonus_d_apex_alb_logs.tf
+code bonus_d_apex_alb_logs.tf   # Open in VS Code
+```
+
+**Add the following code.** Read the comments to understand each section.
+
+> [!warning] **IMPORTANT: Customize These References**
+> Before pasting, note:
+> - If you found `aws_caller_identity` already exists, **DO NOT** include that data source
+> - Replace `aws_lb.main` with YOUR ALB resource name from Step 1.1
+> - Replace `local.chewbacca_zone_id` with YOUR zone reference from Step 1.2
 
 ```hcl
 # ============================================================
 # BONUS D: Zone Apex + ALB Access Logs
 # ============================================================
 # This file adds:
-#   1) Zone apex (chewbacca-growl.com) ALIAS → ALB
+#   1) Zone apex (wheresjack.com) ALIAS → ALB
 #   2) S3 bucket for ALB access logs with required bucket policy
 # ============================================================
 
 # ------------------------------------------------------------
 # Data source: ELB Service Account for your region
 # ------------------------------------------------------------
-# Explanation: AWS runs ELB from their own accounts. We need to 
-# know WHICH account so we can let them write to our S3 bucket.
+# AWS runs ELB from their own accounts. We need to know WHICH 
+# account so we can grant them permission to write to our S3 bucket.
 data "aws_elb_service_account" "main" {}
 
 # ------------------------------------------------------------
 # Data source: Current AWS account ID
 # ------------------------------------------------------------
+# ONLY INCLUDE THIS IF IT DOESN'T ALREADY EXIST IN ANOTHER FILE!
+# Check with: grep -rn "data \"aws_caller_identity\"" *.tf
+# If it exists elsewhere, DELETE these 3 lines:
 data "aws_caller_identity" "current" {}
 
 # ------------------------------------------------------------
 # S3 Bucket for ALB Access Logs
 # ------------------------------------------------------------
-# Explanation: This bucket is where ALB writes every request it handles.
+# This bucket stores every request that hits your ALB.
 # It's your forensic evidence locker for incident response.
 resource "aws_s3_bucket" "chewbacca_alb_logs_bucket01" {
   count  = var.enable_alb_access_logs ? 1 : 0
@@ -167,8 +255,9 @@ resource "aws_s3_bucket" "chewbacca_alb_logs_bucket01" {
 # ------------------------------------------------------------
 # S3 Bucket Policy: Allow ELB Service to Write Logs
 # ------------------------------------------------------------
-# Explanation: The mail carrier (ELB service) needs a key (policy) 
-# to put packages (logs) in your garage (bucket).
+# The ELB service needs explicit permission to write to YOUR bucket.
+# We include BOTH the legacy account-based principal AND the new 
+# service principal for compatibility across all AWS regions.
 resource "aws_s3_bucket_policy" "chewbacca_alb_logs_policy01" {
   count  = var.enable_alb_access_logs ? 1 : 0
   bucket = aws_s3_bucket.chewbacca_alb_logs_bucket01[0].id
@@ -177,7 +266,7 @@ resource "aws_s3_bucket_policy" "chewbacca_alb_logs_policy01" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid       = "AllowELBServiceToPutLogs"
+        Sid       = "AllowELBServiceAccountToPutLogs"
         Effect    = "Allow"
         Principal = {
           AWS = data.aws_elb_service_account.main.arn
@@ -213,10 +302,9 @@ resource "aws_s3_bucket_policy" "chewbacca_alb_logs_policy01" {
 }
 
 # ------------------------------------------------------------
-# S3 Bucket Lifecycle: Auto-expire old logs
+# S3 Bucket Lifecycle: Auto-expire old logs after 90 days
 # ------------------------------------------------------------
-# Explanation: Logs are valuable, but infinite logs = infinite cost.
-# This rule auto-deletes logs older than 90 days.
+# Logs are valuable, but infinite logs = infinite cost.
 resource "aws_s3_bucket_lifecycle_configuration" "chewbacca_alb_logs_lifecycle01" {
   count  = var.enable_alb_access_logs ? 1 : 0
   bucket = aws_s3_bucket.chewbacca_alb_logs_bucket01[0].id
@@ -251,282 +339,582 @@ resource "aws_s3_bucket_public_access_block" "chewbacca_alb_logs_public_block01"
 # ------------------------------------------------------------
 # Route53: Zone Apex ALIAS → ALB
 # ------------------------------------------------------------
-# Explanation: This lets users type "chewbacca-growl.com" (no subdomain)
-# and still reach your ALB. Humans forget subdomains; this catches them.
+# This lets users type "wheresjack.com" (no www/subdomain)
+# and still reach your ALB. Humans forget subdomains!
+#
+# ⚠️ UPDATE: Replace aws_lb.main with YOUR ALB resource name
+# ⚠️ UPDATE: Replace local.chewbacca_zone_id with YOUR zone reference
 resource "aws_route53_record" "chewbacca_apex01" {
-  zone_id = local.chewbacca_zone_id
+  zone_id = local.chewbacca_zone_id  # UPDATE THIS if your zone reference is different
   name    = var.domain_name
   type    = "A"
 
   alias {
-    name                   = aws_lb.chewbacca_alb01.dns_name
-    zone_id                = aws_lb.chewbacca_alb01.zone_id
+    name                   = aws_lb.main.dns_name      # UPDATE THIS to your ALB resource
+    zone_id                = aws_lb.main.zone_id       # UPDATE THIS to your ALB resource
     evaluate_target_health = true
+  }
+}
+
+# ------------------------------------------------------------
+# Outputs
+# ------------------------------------------------------------
+output "apex_url_https" {
+  description = "Zone apex HTTPS URL"
+  value       = "https://${var.domain_name}"
+}
+
+output "alb_logs_bucket_name" {
+  description = "S3 bucket name for ALB access logs"
+  value       = var.enable_alb_access_logs ? aws_s3_bucket.chewbacca_alb_logs_bucket01[0].bucket : "disabled"
+}
+
+output "alb_logs_path" {
+  description = "S3 path where ALB logs are stored"
+  value       = var.enable_alb_access_logs ? "s3://${aws_s3_bucket.chewbacca_alb_logs_bucket01[0].bucket}/${var.alb_access_logs_prefix}/AWSLogs/${data.aws_caller_identity.current.account_id}/elasticloadbalancing/${var.aws_region}/" : "disabled"
+}
+```
+
+**Verification:** Save the file and run:
+
+```bash
+terraform validate
+```
+
+> [!note] **SOCRATIC Q&A: Why Two Principals in the Bucket Policy?**
+> 
+> ***Q:** Why do we have TWO different principals — one AWS account and one Service?*
+> 
+> **A (Explain Like I'm 10):** AWS changed how they deliver logs over time. It's like how mail delivery evolved — first there were individual mail carriers (the old ELB account method), then the postal service got a fleet (the new service principal method). Some regions use the old way, some use the new way! By including both principals, your bucket works no matter which delivery method AWS uses in your region. It's future-proofing.
+> 
+> **Evaluator Question:** *What does `evaluate_target_health = true` do on the ALIAS record?*
+> 
+> **Model Answer:** When `true`, Route53 monitors the ALB's health. If ALB becomes unhealthy (all targets down), Route53 can failover to a backup record if configured. For a single ALB with no failover, this adds health monitoring but won't change DNS behavior since there's no backup target.
+
+---
+
+## PART 4: Modify the Existing ALB Resource
+
+### Step 4.1: Add `access_logs` Block to Your ALB
+
+**Why This Matters:** Terraform can't "append" to existing resources. You must manually edit the ALB resource to add the `access_logs` block.
+
+**Action:** Open the file containing your ALB resource (identified in Step 1.1):
+
+```bash
+code bonus_b.tf   # Or whichever file contains your ALB
+```
+
+**Action:** Find your ALB resource. It looks something like:
+
+```hcl
+resource "aws_lb" "main" {
+  name               = "${var.project_name}-alb01"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.alb.id]
+  subnets            = aws_subnet.public[*].id
+
+  # ... other configuration ...
+
+  tags = {
+    Name = "${var.project_name}-alb01"
   }
 }
 ```
 
-> [!note] **SOCRATIC Q&A**
-> 
-> ***Q:** Why do we have TWO different principals in the bucket policy — one AWS account and one Service?*
-> 
-> **A (Explain Like I'm 10):** AWS changed how they deliver logs over time. It's like how mail delivery evolved — first there were individual mail carriers (the old ELB account method), then the postal service got a fleet (the new service principal method). Some regions use the old way, some use the new way, and some use both! By including both principals, your bucket works no matter which delivery method AWS uses in your region. It's future-proofing.
-> 
-> **Evaluator Question:** *What does `evaluate_target_health = true` do on the ALIAS record, and when would you set it to false?*
-> 
-> **Model Answer:** When `evaluate_target_health = true`, Route53 monitors the ALB's health. If ALB becomes unhealthy (all targets down), Route53 can return no answer or failover to a backup record (if you have one). This enables DNS-level failover. 
-> 
-> Set it to `false` when:
-> - You have a single ALB with no failover and want DNS to always return it (let the ALB handle health)
-> - You're using Route53 health checks separately
-> - The ALB is behind CloudFront (CloudFront handles failover, not DNS)
-> 
-> For most production cases with a single ALB, `true` is correct — but understand it adds Route53 health check costs and behavior.
-
----
-
-### Step 3: Patch the Existing ALB Resource
-
-> [!warning] **⚠️ CRITICAL PATCH**
-> Terraform cannot "append" nested blocks. You MUST manually edit `bonus_b.tf` to add the `access_logs` block inside your existing ALB resource.
-
-**Action:** In `bonus_b.tf`, find `resource "aws_lb" "chewbacca_alb01"` and add this block inside it...this is tricky. Do this very carefully:
+**Action:** Add the `access_logs` block AND the `depends_on` block INSIDE the resource:
 
 ```hcl
+resource "aws_lb" "main" {
+  name               = "${var.project_name}-alb01"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.alb.id]
+  subnets            = aws_subnet.public[*].id
+
   # ============================================================
-  # Access Logs: Chewbacca keeps flight logs for incident response
+  # Access Logs: Log every request to S3 for incident response
   # ============================================================
   access_logs {
     bucket  = var.enable_alb_access_logs ? aws_s3_bucket.chewbacca_alb_logs_bucket01[0].bucket : ""
     prefix  = var.alb_access_logs_prefix
     enabled = var.enable_alb_access_logs
   }
+
+  # ... rest of your existing configuration ...
+
+  tags = {
+    Name = "${var.project_name}-alb01"
+  }
+
+  # ============================================================
+  # Dependency: Bucket policy must exist before ALB tries to write
+  # ============================================================
+  depends_on = [
+    aws_s3_bucket_policy.chewbacca_alb_logs_policy01
+  ]
+}
 ```
 
+> [!warning] **CRITICAL: `depends_on` Must Be INSIDE the Resource Block**
+> The `depends_on` line must be INSIDE the closing brace of the resource, not after it. Putting it outside causes a syntax error.
 
-> [!note] **SOCRATIC Q&A**
+**Verification:**
+
+```bash
+terraform validate
+```
+
+> [!note] **SOCRATIC Q&A: Why `depends_on` is Required Here**
 > 
-> ***Q:** Why can't we just create a separate Terraform resource for the access_logs configuration?*
+> ***Q:** Terraform usually figures out dependencies automatically. Why do we need explicit `depends_on`?*
 > 
-> **A (Explain Like I'm 10):** Imagine you're building a LEGO spaceship. Some pieces MUST be attached while you're building the main body — you can't add the engine as a separate step after the ship is sealed up. The `access_logs` block is like that engine — it's part of the ALB definition itself, not a separate attachment. Terraform sees the ALB as one complete object. You have to open up the original definition and add the piece inside.
+> **A (Explain Like I'm 10):** Imagine you're baking a cake. Terraform is smart enough to know you need to mix ingredients BEFORE putting the pan in the oven (it sees you reference the batter). But what if the recipe says "make sure the oven is preheated"? Terraform doesn't see a direct ingredient connection — the oven just needs to BE ready. `depends_on` is you telling Terraform: "Trust me, the oven (bucket policy) MUST be ready before I put the pan in (enable ALB logging)." Without it, Terraform might try to enable logging before AWS has granted the bucket permission, causing "Access Denied."
 > 
-> **Evaluator Question:** *What's the "learning friction" principle being applied here?*
+> **Evaluator Question:** *What error would you see if the bucket policy doesn't exist when ALB tries to enable logging?*
 > 
-> **Model Answer:** Learning friction means intentionally requiring students to modify existing code rather than just copying new files. This:
-> - Forces you to UNDERSTAND the existing ALB structure
-> - Teaches real-world refactoring skills (you'll inherit code and need to modify it)
-> - Builds confidence that you can safely change infrastructure
-> - Mirrors production reality where you patch existing resources, not start fresh
-> 
-> If we gave you a complete new ALB resource, you'd learn nothing about integrating changes into existing infrastructure — which is 80% of real cloud work.
+> **Model Answer:** `InvalidConfigurationRequest: Access Denied for bucket: <bucket-name>`. This happens because ALB validates it can write to the bucket during configuration. Without the policy granting ELB permission, the validation fails even though you own both resources.
 
 ---
 
-### Step 4: Add Outputs
+## PART 5: Validate, Plan, and Apply
 
-**Action:** Append to `outputs.tf`:
+### Step 5.1: Validate Configuration
+
+**Action:** Run validation:
+
+```bash
+terraform validate
+```
+
+**Expected:** `Success! The configuration is valid.`
+
+**If you get errors, see the Troubleshooting section at the end of this guide.**
+
+---
+
+### Step 5.2: Run Terraform Plan
+
+**Action:** Generate an execution plan:
+
+```bash
+terraform plan
+```
+
+**Review the plan carefully. You should see:**
+- `aws_s3_bucket.chewbacca_alb_logs_bucket01[0]` — CREATE
+- `aws_s3_bucket_policy.chewbacca_alb_logs_policy01[0]` — CREATE
+- `aws_s3_bucket_lifecycle_configuration...` — CREATE
+- `aws_s3_bucket_public_access_block...` — CREATE
+- `aws_route53_record.chewbacca_apex01` — CREATE
+- `aws_lb.main` — UPDATE (to add access_logs)
+
+**If the plan shows unexpected changes or errors, see Troubleshooting.**
+
+---
+
+### Step 5.3: Apply Changes
+
+**Action:** Apply the configuration:
+
+```bash
+terraform apply
+```
+
+**When prompted:** Type `yes` to confirm.
+
+**Expected Output:**
+
+```
+Apply complete! Resources: 5 added, 1 changed, 0 destroyed.
+
+Outputs:
+
+alb_logs_bucket_name = "chewbacca-alb-logs-262164343754"
+alb_logs_path = "s3://chewbacca-alb-logs-262164343754/alb-access-logs/AWSLogs/262164343754/elasticloadbalancing/us-west-2/"
+apex_url_https = "https://wheresjack.com"
+...
+```
+
+---
+
+## PART 6: Verification
+
+### Step 6.1: Verify Zone Apex DNS
+
+**Action:** Test DNS resolution:
+
+```bash
+# Zone apex should resolve to ALB IPs
+dig wheresjack.com A +short
+
+# Should match the app subdomain IPs
+dig www.wheresjack.com A +short
+```
+
+**Expected:** Both commands return the same 2-3 IP addresses.
+
+**Action:** Verify the record type (should be A, not CNAME):
+
+```bash
+dig wheresjack.com +noall +answer
+```
+
+**Expected:** Shows `A` record type, not `CNAME`.
+
+---
+
+### Step 6.2: Verify HTTPS Connectivity
+
+**Action:** Test zone apex HTTPS:
+
+```bash
+curl -I https://wheresjack.com
+```
+
+**Expected:** `HTTP/2 200` (or `301` redirect, then `200`)
+
+**Action:** Test app subdomain HTTPS:
+
+```bash
+curl -I https://www.wheresjack.com
+```
+
+**Expected:** `HTTP/2 200`
+
+---
+
+### Step 6.3: Verify ALB Access Logs Enabled
+
+**Action:** Check ALB attributes:
+
+```bash
+aws elbv2 describe-load-balancer-attributes \
+  --load-balancer-arn $(aws elbv2 describe-load-balancers \
+    --names chewbacca-alb01 \
+    --query "LoadBalancers[0].LoadBalancerArn" \
+    --output text) \
+  --query "Attributes[?starts_with(Key, 'access_logs')]"
+```
+
+**Expected:**
+
+```json
+[
+    { "Key": "access_logs.s3.enabled", "Value": "true" },
+    { "Key": "access_logs.s3.bucket", "Value": "chewbacca-alb-logs-262164343754" },
+    { "Key": "access_logs.s3.prefix", "Value": "alb-access-logs" }
+]
+```
+
+---
+
+### Step 6.4: Verify S3 Bucket Configuration
+
+**Action:** Check bucket exists and has correct policy:
+
+```bash
+# Bucket exists
+aws s3api head-bucket --bucket chewbacca-alb-logs-262164343754
+
+# Public access is blocked
+aws s3api get-public-access-block \
+  --bucket chewbacca-alb-logs-262164343754 \
+  --query "PublicAccessBlockConfiguration"
+```
+
+**Expected:** No errors; all public access blocks show `true`.
+
+---
+
+### Step 6.5: Verify Logs Appear in S3
+
+**Action:** Generate traffic:
+
+```bash
+for i in {1..10}; do curl -s https://wheresjack.com > /dev/null; done
+```
+
+**Action:** Wait 5-10 minutes (ALB batches logs every 5 minutes).
+
+**Action:** Check for logs:
+
+```bash
+aws s3 ls s3://chewbacca-alb-logs-262164343754/alb-access-logs/AWSLogs/262164343754/elasticloadbalancing/us-west-2/ --recursive | head
+```
+
+**Expected:** `.log.gz` files with timestamps.
+
+---
+
+### Step 6.6: Verify Route53 Records
+
+**Action:** List A records in your hosted zone:
+
+```bash
+aws route53 list-resource-record-sets \
+  --hosted-zone-id Z08529463796GXWJTC93E \
+  --query "ResourceRecordSets[?Type=='A'].[Name,AliasTarget.DNSName]" \
+  --output table
+```
+
+**Expected:** Shows both `wheresjack.com` and `www.wheresjack.com` pointing to ALB DNS name.
+
+---
+
+## PART 7: All-in-One Verification Script
+
+**Action:** Run this complete verification:
+
+```bash
+echo "=== Lab 1C Bonus D Verification ==="
+echo ""
+echo "1. Zone Apex DNS:"
+dig wheresjack.com A +short
+echo ""
+echo "2. HTTPS Connectivity:"
+curl -sI https://wheresjack.com | head -1
+curl -sI https://www.wheresjack.com | head -1
+echo ""
+echo "3. ALB Access Logs Enabled:"
+aws elbv2 describe-load-balancer-attributes \
+  --load-balancer-arn $(aws elbv2 describe-load-balancers --names chewbacca-alb01 --query "LoadBalancers[0].LoadBalancerArn" --output text) \
+  --query "Attributes[?starts_with(Key, 'access_logs')].{Key:Key,Value:Value}" --output table
+echo ""
+echo "4. S3 Bucket Public Access Block:"
+aws s3api get-public-access-block --bucket chewbacca-alb-logs-262164343754 --query "PublicAccessBlockConfiguration" --output table
+echo ""
+echo "5. Route53 A Records:"
+aws route53 list-resource-record-sets --hosted-zone-id Z08529463796GXWJTC93E --query "ResourceRecordSets[?Type=='A'].[Name]" --output text
+echo ""
+echo "=== Verification Complete ==="
+```
+
+---
+
+## TROUBLESHOOTING: Common Errors and Resolutions
+
+This section documents actual errors encountered during lab completion and their solutions.
+
+---
+
+### Error 1: Duplicate Data Source
+
+**Error Message:**
+```
+Error: Duplicate data "aws_caller_identity" configuration
+  on bonus_d_apex_alb_logs.tf line 19
+```
+
+**Root Cause:** The `data "aws_caller_identity" "current" {}` data source already exists in another file (check `bonus_a.tf` or similar).
+
+**Resolution:** Delete the duplicate data source declaration from `bonus_d_apex_alb_logs.tf`. Terraform shares data sources across all `.tf` files in the same directory.
+
+**Prevention:** Always run the audit in Part 1 before adding new data sources.
+
+---
+
+### Error 2: Resource Reference Not Found (ALB Naming Mismatch)
+
+**Error Message:**
+```
+Error: Reference to undeclared resource
+  aws_lb.chewbacca_alb01 is not declared in the root module
+```
+
+**Root Cause:** The bonus_d file references `aws_lb.chewbacca_alb01` but your actual ALB is named `aws_lb.main` (or vice versa).
+
+**Resolution:**
+1. Find your actual ALB resource name:
+   ```bash
+   grep -rn "resource \"aws_lb\"" *.tf
+   ```
+2. Update all references in `bonus_d_apex_alb_logs.tf` to use the correct name.
+
+**Prevention:** Complete Step 1.1 and use YOUR resource names, not the guide's examples.
+
+---
+
+### Error 3: Access Denied When Enabling ALB Logging
+
+**Error Message:**
+```
+Error: modifying ELBv2 Load Balancer attributes
+InvalidConfigurationRequest: Access Denied for bucket: chewbacca-alb-logs-262164343754
+```
+
+**Root Cause:** Terraform tried to enable ALB access logs before the S3 bucket policy was applied. This is a race condition.
+
+**Resolution:** Add explicit `depends_on` inside the ALB resource:
 
 ```hcl
-# ============================================================
-# Bonus D Outputs
-# ============================================================
+resource "aws_lb" "main" {
+  # ... existing config ...
 
-# Explanation: The apex URL is the front gate—humans type this when they forget subdomains.
-output "chewbacca_apex_url_https" {
-  description = "HTTPS URL for the zone apex (naked domain)"
-  value       = "https://${var.domain_name}"
+  depends_on = [
+    aws_s3_bucket_policy.chewbacca_alb_logs_policy01
+  ]
 }
+```
 
-# Explanation: Log bucket name is where the footprints live—useful when hunting 5xx or WAF blocks.
-output "chewbacca_alb_logs_bucket_name" {
-  description = "S3 bucket name for ALB access logs"
-  value       = var.enable_alb_access_logs ? aws_s3_bucket.chewbacca_alb_logs_bucket01[0].bucket : null
-}
+Then run `terraform apply` again.
 
-# Explanation: Full S3 path prefix for finding logs quickly during incidents
-output "chewbacca_alb_logs_path" {
-  description = "Full S3 path where ALB logs are stored"
-  value       = var.enable_alb_access_logs ? "s3://${aws_s3_bucket.chewbacca_alb_logs_bucket01[0].bucket}/${var.alb_access_logs_prefix}/AWSLogs/${data.aws_caller_identity.current.account_id}/elasticloadbalancing/${var.aws_region}/" : null
+---
+
+### Error 4: Multiple Route53 Hosted Zones Matched
+
+**Error Message:**
+```
+Error: multiple Route 53 Hosted Zones matched
+  with data.aws_route53_zone.main
+```
+
+**Root Cause:** You have two or more hosted zones with the same domain name (common when Terraform creates a zone but the registrar also created one).
+
+**Diagnosis:**
+```bash
+aws route53 list-hosted-zones --query "HostedZones[*].[Id,Name,ResourceRecordSetCount]" --output table
+```
+
+**Resolution Options:**
+
+**Option A:** Use the existing registrar zone (recommended):
+1. Identify the correct zone (the one with more records, or check which one the domain NS records point to)
+2. Update `variables.tf`:
+   ```hcl
+   variable "route53_hosted_zone_id" {
+     default = "Z08529463796GXWJTC93E"  # Your actual zone ID
+   }
+   ```
+3. Delete any `data.aws_route53_zone.main` data sources
+4. Use a local or variable for zone references:
+   ```hcl
+   locals {
+     chewbacca_zone_id = var.route53_hosted_zone_id
+   }
+   ```
+
+**Option B:** Delete the unused Terraform-created zone in AWS Console, then re-run Terraform.
+
+---
+
+### Error 5: Route53 Record Already Exists
+
+**Error Message:**
+```
+Error: creating Route53 Record: InvalidChangeBatch: 
+[Tried to create resource record set [name='www.wheresjack.com.', type='A'] but it already exists]
+```
+
+**Root Cause:** You have two Terraform resources trying to create the same DNS record (e.g., one in `variables.tf` and one in `bonus_b.tf`).
+
+**Diagnosis:**
+```bash
+grep -rn "aws_route53_record" *.tf | grep -i "app\|www"
+```
+
+**Resolution:**
+1. Identify which files contain duplicate record resources
+2. Delete ONE of them (keep the one in the most logical location, usually near related resources)
+3. Run `terraform apply`
+
+---
+
+### Error 6: Missing ACM Certificate Resource
+
+**Error Message:**
+```
+Error: Reference to undeclared resource
+  aws_acm_certificate.chewbacca_acm_cert01 is not declared
+```
+
+**Root Cause:** The HTTPS listener references a Terraform-managed ACM certificate, but the certificate resource was never created (you may have originally created the certificate manually in the Console).
+
+**Diagnosis:**
+```bash
+grep -rn "aws_acm_certificate" *.tf
+```
+
+If you only see REFERENCES (`.arn`, `.domain_validation_options`) but no `resource "aws_acm_certificate"`, the resource is missing.
+
+**Resolution:** Add the ACM certificate resource to your Route53/SSL file:
+
+```hcl
+resource "aws_acm_certificate" "chewbacca_acm_cert01" {
+  domain_name               = var.domain_name
+  subject_alternative_names = ["*.${var.domain_name}"]
+  validation_method         = "DNS"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  tags = {
+    Name        = "${var.project_name}-acm-cert01"
+    Environment = var.environment
+  }
 }
 ```
 
 ---
 
-## Verification Commands
+### Error 7: Orphaned `depends_on` Outside Resource Block
 
-### Verify Zone Apex DNS Record
+**Error Message:**
+```
+Error: Unsupported block type
+  Blocks of type "depends_on" are not expected here.
+```
 
-> [!tip] **VERIFICATION: Zone Apex Record Exists**
-> ```bash
-> # List Route53 records for the apex
-> aws route53 list-resource-record-sets \
->   --hosted-zone-id <ZONE_ID> \
->   --query "ResourceRecordSets[?Name=='chewbacca-growl.com.']"
-> 
-> # Expected: Type = "A" with AliasTarget pointing to ALB
-> 
-> # Test DNS resolution
-> dig chewbacca-growl.com A +short
-> 
-> # Expected: Returns ALB IP addresses (these rotate)
-> 
-> # Test HTTPS access
-> curl -I https://chewbacca-growl.com
-> 
-> # Expected: HTTP/2 200 (or 301 redirect)
-> ```
+**Root Cause:** The `depends_on` was placed AFTER the resource's closing brace instead of INSIDE it.
 
-> [!note] **SOCRATIC Q&A**
-> 
-> ***Q:** Why does `dig` show IP addresses but the Terraform shows an ALIAS to a DNS name?*
-> 
-> **A (Explain Like I'm 10):** When you look up your friend's phone number in your contacts, you see "Alex - 555-1234." But when your phone actually calls, it uses just the number, not the name. Route53 ALIAS is like your contacts — it STORES the ALB's DNS name, but when someone asks "what's the IP?", Route53 looks up that name and RETURNS the actual IP addresses. The dig command shows you what the phone sees (numbers), not what your contacts app stores (name + number).
-> 
-> **Evaluator Question:** *How do ALIAS records differ from CNAME records in terms of DNS queries?*
-> 
-> **Model Answer:** 
-> | Aspect | CNAME | ALIAS |
-> |--------|-------|-------|
-> | DNS Response | Returns another domain name (requires second lookup) | Returns IP addresses directly (one lookup) |
-> | Zone Apex | ❌ Not allowed at apex | ✅ Allowed at apex |
-> | Query Charges | Standard Route53 pricing | Free for AWS resources |
-> | TTL | You set it | Inherited from target |
-> | Health Checks | Separate configuration | Built-in with `evaluate_target_health` |
-> 
-> ALIAS is faster and cheaper for AWS resources.
+**Wrong:**
+```hcl
+resource "aws_lb" "main" {
+  # config
+}
+
+depends_on = [aws_s3_bucket_policy.chewbacca_alb_logs_policy01]  # WRONG - outside!
+```
+
+**Correct:**
+```hcl
+resource "aws_lb" "main" {
+  # config
+
+  depends_on = [aws_s3_bucket_policy.chewbacca_alb_logs_policy01]  # CORRECT - inside!
+}
+```
 
 ---
 
-### Verify ALB Logging Configuration
+### Error 8: Reference to Deleted Data Source
 
-> [!tip] **VERIFICATION: ALB Access Logs Enabled**
-> ```bash
-> # Step 1: Get the ALB ARN
-> ALB_ARN=$(aws elbv2 describe-load-balancers \
->   --names chewbacca-alb01 \
->   --query "LoadBalancers[0].LoadBalancerArn" \
->   --output text)
-> 
-> # Step 2: Check ALB attributes
-> aws elbv2 describe-load-balancer-attributes \
->   --load-balancer-arn "$ALB_ARN" \
->   --query "Attributes[?Key=='access_logs.s3.enabled' || Key=='access_logs.s3.bucket' || Key=='access_logs.s3.prefix']"
-> 
-> # Expected output:
-> # [
-> #   { "Key": "access_logs.s3.enabled", "Value": "true" },
-> #   { "Key": "access_logs.s3.bucket", "Value": "chewbacca-alb-logs-123456789012" },
-> #   { "Key": "access_logs.s3.prefix", "Value": "alb-access-logs" }
-> # ]
-> ```
+**Error Message:**
+```
+Error: Reference to undeclared resource
+  data.aws_route53_zone.main.zone_id is not declared
+```
 
----
+**Root Cause:** You deleted the `data.aws_route53_zone.main` data source but other files still reference it.
 
-### Generate Traffic and Verify Logs
+**Diagnosis:**
+```bash
+grep -rn "data.aws_route53_zone.main" *.tf
+```
 
-> [!tip] **VERIFICATION: Logs Appearing in S3**
-> ```bash
-> # Step 1: Generate some traffic
-> curl -I https://chewbacca-growl.com
-> curl -I https://app.chewbacca-growl.com
-> curl -I https://chewbacca-growl.com/nonexistent-page  # generates 404
-> 
-> # Step 2: Wait 5 minutes (ALB batches logs every 5 minutes)
-> 
-> # Step 3: Check for logs in S3
-> aws s3 ls s3://<BUCKET_NAME>/alb-access-logs/AWSLogs/<ACCOUNT_ID>/elasticloadbalancing/ --recursive | head
-> 
-> # Expected: .gz files with timestamps
-> # Example: alb-access-logs/AWSLogs/123456789012/elasticloadbalancing/us-east-1/2024/01/15/...
-> 
-> # Step 4: Download and inspect a log file
-> aws s3 cp s3://<BUCKET_NAME>/<PATH_TO_LOG_FILE>.gz ./
-> gunzip *.gz
-> cat *.log | head -5
-> ```
+**Resolution:** Update all references to use your zone local/variable:
 
-> [!note] **SOCRATIC Q&A**
-> 
-> ***Q:** Why does it take 5 minutes for logs to appear? Why not instant?*
-> 
-> **A (Explain Like I'm 10):** Imagine if your teacher wrote a note to your parents every single time you raised your hand in class. That would be exhausting and wasteful! Instead, teachers usually write a summary at the end of the day. ALB does the same thing — instead of writing to S3 after EVERY request (expensive and slow), it collects requests for 5 minutes, then writes them all at once in a batch. This is efficient and cheaper, but means you wait a bit to see recent logs.
-> 
-> **Evaluator Question:** *How would you access logs faster than the 5-minute batch window during an active incident?*
-> 
-> **Model Answer:** For real-time visibility during incidents:
-> 1. **CloudWatch Metrics** — ALB metrics update every minute (request count, 5xx errors, latency)
-> 2. **CloudWatch Logs via ALB** — Not native, but you can stream to CloudWatch via Lambda
-> 3. **WAF Logs** — If using WAF, logs can stream to CloudWatch Logs, S3, or Firehose in near-real-time
-> 4. **VPC Flow Logs** — Network-level visibility without waiting for ALB batching
-> 5. **AWS Firehose + real-time processing** — Stream ALB logs to Firehose for sub-minute delivery
-> 
-> For most incidents, 5-minute delay is acceptable for forensics. For real-time blocking, use WAF with CloudWatch metrics.
+```hcl
+# Change this:
+zone_id = data.aws_route53_zone.main.zone_id
 
----
+# To this:
+zone_id = local.chewbacca_zone_id
+```
 
-## Understanding ALB Log Format
-
-Each log entry contains fields separated by spaces. Key fields for incident response:
-
-| **Field** | **What It Tells You** | **Incident Use** |
-|-----------|----------------------|------------------|
-| `client:port` | Source IP and port | Who sent the request |
-| `request_processing_time` | Time ALB spent | ALB overload detection |
-| `target_processing_time` | Time backend spent | Backend performance issues |
-| `response_processing_time` | Time to send response | Large response or client issues |
-| `elb_status_code` | HTTP status ALB returned | Error rate analysis |
-| `target_status_code` | HTTP status from backend | Backend errors vs ALB errors |
-| `request` | HTTP method + path + query | What was requested |
-| `user_agent` | Client software | Bot detection, browser issues |
-| `ssl_cipher` | TLS cipher used | Security audit, compatibility |
-| `actions_executed` | WAF/routing actions | Which rules matched |
-
-> [!note] **SOCRATIC Q&A**
-> 
-> ***Q:** What's the difference between `elb_status_code` and `target_status_code`?*
-> 
-> **A (Explain Like I'm 10):** Imagine you call a pizza place (ALB) and ask for pepperoni pizza. The phone operator (ALB) might say "Sorry, we're closed" (ELB status 503) — that's the ALB's response. Or the operator might connect you to the kitchen (target), and the kitchen says "Sorry, we're out of pepperoni" (target status 404). The ELB status is what the ALB itself decided. The target status is what your backend EC2 said. If ELB shows an error but target is empty (`-`), the request never reached your backend — the problem is network or ALB-level.
-> 
-> **Evaluator Question:** *You see logs showing `elb_status_code=504` but `target_status_code=-`. What does this indicate?*
-> 
-> **Model Answer:** This indicates a **gateway timeout** where:
-> - The request reached ALB
-> - ALB tried to forward to the target
-> - Target never responded within the timeout period
-> - ALB gave up and returned 504
-> 
-> The `-` for target_status means no response was received. Root causes:
-> 1. Target is down/crashed
-> 2. Security group blocking ALB → Target
-> 3. Target overloaded and not responding
-> 4. Application deadlock or infinite loop
-> 5. Network connectivity between ALB and target
-> 
-> Check: Target health status, security groups, application logs on EC2, `target_processing_time` for recent successful requests.
-
----
-
-## Troubleshooting Common Issues
-
-| **Symptom** | **Likely Cause** | **Fix** |
-|-------------|------------------|---------|
-| `terraform apply` fails with "Access Denied" on S3 | Bucket policy not applied before ALB references it | Use `depends_on` or apply twice |
-| Logs not appearing after 5+ minutes | Bucket policy missing ELB service account | Verify policy includes correct regional ELB account |
-| Zone apex returns NXDOMAIN | Record not created or wrong zone ID | Verify zone_id matches your hosted zone |
-| Zone apex returns wrong IP | Cached old record | Wait for TTL to expire or flush DNS |
-| Logs appear but are empty | Traffic not reaching ALB | Check CloudFront/WAF, verify ALB is receiving requests |
-
----
-
-## Deliverables Checklist
-
-| **Requirement** | **Verification Command** | **Expected Result** |
-|-----------------|-------------------------|---------------------|
-| Zone apex DNS record exists | `dig chewbacca-growl.com A +short` | Returns IP addresses |
-| HTTPS works on apex | `curl -I https://chewbacca-growl.com` | HTTP/2 200 or 301 |
-| ALB logging enabled | `aws elbv2 describe-load-balancer-attributes` | access_logs.s3.enabled = true |
-| S3 bucket exists with policy | `aws s3 ls s3://<BUCKET>/` | Bucket is accessible |
-| Logs appearing in S3 | `aws s3 ls s3://<BUCKET>/<PREFIX>/ --recursive` | .gz log files present |
+Check ALL files, including outputs files (`*_outputs.tf`).
 
 ---
 
@@ -538,7 +926,7 @@ DNS RFC prohibits CNAME at the zone apex because it would conflict with SOA and 
 
 **B) What information would you extract from ALB logs during a 5xx error spike?**
 
-Client IPs (is it one source or many?), request paths (one endpoint or all?), target_status_code vs elb_status_code (backend issue or ALB issue?), target_processing_time (slow backend or timeout?), timestamp patterns (sudden spike or gradual increase?).
+Client IPs (one source or many?), request paths (one endpoint or all?), target_status_code vs elb_status_code (backend issue or ALB issue?), target_processing_time (slow backend?), timestamp patterns (sudden spike or gradual?).
 
 **C) Why do we set a 90-day lifecycle policy on logs?**
 
@@ -550,6 +938,19 @@ ALB logs show ALL traffic (allowed and blocked) with backend behavior. WAF logs 
 
 ---
 
+## Deliverables Checklist
+
+| Requirement | Verification Command | Expected Result |
+|-------------|---------------------|-----------------|
+| Zone apex DNS record exists | `dig wheresjack.com A +short` | Returns IP addresses |
+| HTTPS works on apex | `curl -I https://wheresjack.com` | HTTP/2 200 or 301 |
+| ALB logging enabled | See Step 6.3 command | access_logs.s3.enabled = true |
+| S3 bucket exists with policy | `aws s3 ls s3://<BUCKET>/` | Bucket accessible |
+| Public access blocked | See Step 6.4 command | All blocks = true |
+| Logs appearing in S3 | See Step 6.5 command | .gz files present (after 5 min) |
+
+---
+
 ## What This Lab Proves About You
 
 *If you complete this bonus, you've demonstrated:*
@@ -558,10 +959,9 @@ ALB logs show ALL traffic (allowed and blocked) with backend behavior. WAF logs 
 - **Operational readiness** — Access logs for incident response and forensics
 - **S3 security** — Bucket policies with service principals
 - **Cost awareness** — Lifecycle policies to manage storage growth
+- **Troubleshooting skills** — Resolving real-world Terraform configuration issues
 
-**"I can configure production-grade DNS and logging for real incident response."**
-
-This is how companies ship. You're operating like a real cloud engineer.
+**"I can configure production-grade DNS and logging, and debug infrastructure-as-code issues methodically."**
 
 ---
 
@@ -570,7 +970,3 @@ This is how companies ship. You're operating like a real cloud engineer.
 **Lab 1C Bonus E:** WAF Logging (CloudWatch / S3 / Firehose)
 - Stream WAF decisions to CloudWatch Logs for real-time analysis
 - Build on this foundation with security-specific observability
-
-**Lab 1C Bonus F:** CloudWatch Logs Insights Queries
-- Write operational runbooks using Logs Insights
-- Query both ALB and WAF logs for incident patterns
