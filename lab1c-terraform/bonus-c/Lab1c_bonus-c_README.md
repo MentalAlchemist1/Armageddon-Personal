@@ -1,99 +1,189 @@
-# SEIR FOUNDATIONS
-# LAB 1C BONUS-C: Route53 DNS + ACM Validation
+# Lab 1C Bonus-C: Route53 DNS + ACM Validation
 
-*Enhanced Socratic Q&A Guide*
-
----
-
-## ⚠️ PREREQUISITE
-
-> **Lab 1C Bonus-B must be completed and verified before starting Bonus-C.**
-> You must have:
-> - ALB with TLS (HTTPS listener on port 443)
-> - ACM certificate created (may still be pending validation)
-> - WAF attached to ALB
-> - Working EC2 → RDS application
+## Enhanced Step-by-Step Guide with Embedded Socratic Q&A
 
 ---
 
-## Bonus-C Overview
+## ⚠️ PREREQUISITES CHECKLIST
 
-Bonus-C connects your infrastructure to the **real internet** through DNS. You're creating the "phone book entry" that lets users type `app.chewbacca-growl.com` instead of memorizing ugly ALB DNS names.
+Before starting Bonus-C, verify you have completed Bonus-B.
 
-### What You're Building
+**Action:** Run these verification commands:
 
-| Component | Purpose | Career Value |
+```bash
+# 1. Verify ALB exists
+aws elbv2 describe-load-balancers \
+  --query "LoadBalancers[?contains(LoadBalancerName, 'chewbacca')].{Name:LoadBalancerName,DNS:DNSName}" \
+  --output table
+
+# 2. Verify ACM certificate exists (may still be PENDING_VALIDATION - that's OK)
+aws acm list-certificates \
+  --query "CertificateSummaryList[].{Domain:DomainName,Status:Status}" \
+  --output table
+
+# 3. Verify HTTPS listener exists on ALB
+aws elbv2 describe-listeners \
+  --load-balancer-arn $(aws elbv2 describe-load-balancers --query "LoadBalancers[?contains(LoadBalancerName, 'chewbacca')].LoadBalancerArn" --output text) \
+  --query "Listeners[?Port==\`443\`].{Port:Port,Protocol:Protocol}" \
+  --output table
+```
+
+**Expected Results:**
+- ✅ ALB exists with DNS name
+- ✅ ACM certificate exists (status may be PENDING_VALIDATION or ISSUED)
+- ✅ HTTPS listener on port 443
+
+> **If any check fails, complete Bonus-B first before proceeding.**
+
+---
+
+## 🎯 Bonus-C Overview
+
+**What You're Building:**
+
+| Component | Purpose | What It Does |
 |-----------|---------|--------------|
-| Route53 Hosted Zone | DNS authority for your domain | Domain management fundamentals |
-| ACM DNS Validation | Prove you own the domain to get TLS cert | Certificate lifecycle management |
-| ALIAS Record | Point `app.domain.com` → ALB | Production DNS patterns |
+| Route53 Hosted Zone | DNS authority for your domain | Manages all DNS records for `yourdomain.com` |
+| ACM DNS Validation Records | Prove domain ownership | CNAME records that tell ACM you control the domain |
+| ACM Certificate Validation | Wait for certificate issuance | Resource that blocks until cert status = ISSUED |
+| ALIAS Record | Point subdomain → ALB | `www.yourdomain.com` resolves to your ALB |
+
+**End State:** Users type `https://www.yourdomain.com` in their browser and reach your application over HTTPS with a valid TLS certificate.
 
 ---
 
-## Why DNS Matters (Industry Context)
-
-> **SOCRATIC Q&A**
->
-> ***Q:** I can already access my app via the ALB DNS name. Why do I need Route53?*
->
-> **A (Explain Like I'm 10):** Imagine if instead of calling your friend "Alex," you had to say "Human-located-at-123-Oak-Street-Apartment-4B-Third-Floor." That's what ALB DNS names are like: `chewbacca-alb01-1234567890.us-east-1.elb.amazonaws.com`. Nobody wants to type that! DNS is like a phone book that lets people use easy names (`app.chewbacca-growl.com`) that secretly translate to the ugly addresses computers need.
->
-> **Evaluator Question:** *Why do production applications need custom domain names instead of default AWS endpoints?*
->
-> **Model Answer:** Custom domains provide: (1) **Brand identity** - users trust `mycompany.com` more than random AWS URLs, (2) **Portability** - if you migrate to another load balancer or cloud provider, you update DNS instead of changing every link, (3) **TLS certificates** - ACM certificates are issued for YOUR domain, not AWS's, (4) **SEO and marketing** - memorable URLs drive traffic, (5) **Professional credibility** - AWS endpoints scream "demo project" to customers.
-
----
-
-## Part 1: Understanding the DNS → TLS → ALB Chain
-
-Before writing Terraform, understand how these pieces connect:
+## 🧠 Why DNS Matters (Understand Before You Build)
 
 ```
-User types: app.chewbacca-growl.com
+User types: www.yourdomain.com
         ↓
-Route53 resolves: "That points to ALB at xyz.elb.amazonaws.com"
+Route53 resolves → "That points to ALB at xyz.elb.amazonaws.com"
         ↓
 Browser connects to ALB on port 443 (HTTPS)
         ↓
-ALB presents TLS certificate (ACM) proving it's really chewbacca-growl.com
+ALB presents TLS certificate (ACM) proving it's really yourdomain.com
         ↓
-Browser says "Certificate valid!" → secure green lock
+Browser says "Certificate valid!" → secure green lock 🔒
         ↓
 Traffic flows to private EC2 targets
 ```
 
-> **SOCRATIC Q&A**
->
-> ***Q:** Why does the certificate need to match the domain name? Can't I just use any certificate?*
->
-> **A (Explain Like I'm 10):** Imagine you're visiting your friend's house. You knock, and someone opens the door holding an ID card. If the ID says "Alex Smith" and you're at 123 Oak Street where Alex lives, great! But if the ID says "Bob Johnson," you'd be suspicious—is this really Alex's house, or did someone break in? TLS certificates are ID cards for websites. The certificate MUST match the domain you typed, or your browser warns you: "This might not be who you think it is!"
->
-> **Evaluator Question:** *What happens if a user navigates to your ALB's raw DNS name instead of your custom domain?*
->
-> **Model Answer:** The browser will show a certificate mismatch warning. The ACM certificate is issued for `chewbacca-growl.com` and `app.chewbacca-growl.com`, NOT for `xyz.elb.amazonaws.com`. The connection might still work (with user override), but users will see scary "Not Secure" warnings. This is why we redirect all traffic through the custom domain and why origin cloaking (Lab 2) hides the ALB entirely.
+> [!question] SOCRATIC Q&A: Why Custom Domains?
+> 
+> ***Q:** I can already access my app via the ALB DNS name. Why do I need Route53?*
+> 
+> **A (Explain Like I'm 10):** Imagine if instead of calling your friend "Alex," you had to say "Human-located-at-123-Oak-Street-Apartment-4B-Third-Floor." That's what ALB DNS names are like: `chewbacca-alb01-1234567890.us-east-1.elb.amazonaws.com`. Nobody wants to type that! DNS is like a phone book that lets people use easy names (`www.yourdomain.com`) that secretly translate to the ugly addresses computers need.
+> 
+> **Evaluator Question:** *Why do production applications need custom domain names instead of default AWS endpoints?*
+> 
+> **Model Answer:** Custom domains provide: (1) **Brand identity** - users trust `mycompany.com` more than random AWS URLs, (2) **Portability** - if you migrate to another cloud provider, you update DNS instead of changing every link, (3) **TLS certificates** - ACM certificates are issued for YOUR domain, not AWS's, (4) **SEO and marketing** - memorable URLs drive traffic, (5) **Professional credibility** - AWS endpoints scream "demo project" to customers.
 
 ---
 
-## Part 2: Terraform File Structure for Bonus-C
+## PART 1: Navigate to Your Terraform Directory
 
-| File | Purpose |
-|------|---------|
-| `variables.tf` | Add Route53 management toggles |
-| `bonus_c_route53.tf` | Hosted zone + DNS validation + ALIAS record |
-| `outputs.tf` | Zone ID and HTTPS URL outputs |
-| `bonus_b.tf` | Update HTTPS listener depends_on |
+### Step 1.1: Find Your Terraform Project Directory
+
+**Action:** Open your terminal and navigate to your Lab 1C Terraform directory:
+
+```bash
+cd ~/path/to/your/lab1c-terraform
+```
+
+**Action:** Verify you're in the correct directory by checking for Terraform files AND state:
+
+```bash
+# List terraform files
+ls -la *.tf
+
+# Verify state file exists
+ls -la terraform.tfstate 2>/dev/null || ls -la .terraform/ 2>/dev/null
+```
+
+**Expected Output:** 
+- You should see files like `main.tf`, `variables.tf`, `bonus_b.tf`
+- You should see `terraform.tfstate` or `.terraform/` directory
+
+> [!warning] TROUBLESHOOTING: "No state file was found!"
+> 
+> **Symptom:** Running `terraform state list` shows "No state file was found!"
+> 
+> **Cause:** You're in the wrong directory. Your Terraform state lives where you originally ran `terraform apply`.
+> 
+> **Fix:** Find your actual Terraform directory:
+> ```bash
+> # Find directories with Terraform state
+> find ~ -name "terraform.tfstate" 2>/dev/null
+> 
+> # Or find directories with .tf files
+> find ~ -name "main.tf" -type f 2>/dev/null
+> ```
+> 
+> Navigate to that directory before proceeding.
 
 ---
 
-## Step 1: Add Variables for Route53 Management
+### Step 1.2: Verify Current Terraform State
 
-**Why variables?** You might already have a Route53 hosted zone from the AWS console, or you might want Terraform to create it. Variables give you flexibility.
+**Action:** Confirm your Bonus-B resources are in the state:
 
-### Action: Append to `variables.tf`
+```bash
+terraform state list | grep -E "(alb|acm|waf)"
+```
+
+**Expected Output:** You should see resources like:
+```
+aws_acm_certificate.chewbacca_acm_cert01
+aws_lb.chewbacca_alb01
+aws_lb_listener.chewbacca_https_listener01
+aws_wafv2_web_acl.chewbacca_waf01
+```
+
+**If you don't see these resources, you're either:**
+1. In the wrong directory
+2. Haven't completed Bonus-B
+3. Resources were created in a different Terraform workspace
+
+---
+
+## PART 2: Add Required Variables
+
+### Step 2.1: Check Existing Variables
+
+Before adding new variables, check what you already have defined.
+
+**Action:** Search for existing variables:
+
+```bash
+grep -E "^variable \"(domain_name|app_subdomain|environment|manage_route53)" variables.tf
+```
+
+**Possible Outputs:**
+
+| Output | Meaning | Action |
+|--------|---------|--------|
+| `variable "domain_name"` appears | Already defined in Bonus-B | ✅ Skip adding it |
+| `variable "app_subdomain"` appears | Already defined in Bonus-B | ✅ Skip adding it |
+| `variable "environment"` appears | Already defined | ✅ Skip adding it |
+| No output / grep returns nothing | Variables not defined | ⚠️ Need to add them |
+
+---
+
+### Step 2.2: Add Route53 Variables to `variables.tf`
+
+**Action:** Open `variables.tf` in your code editor:
+
+```bash
+code variables.tf
+# OR: vim variables.tf
+# OR: nano variables.tf
+```
+
+**Action:** Scroll to the END of the file and add the following code block:
 
 ```hcl
 # ==============================================
-# ROUTE53 CONFIGURATION
+# ROUTE53 CONFIGURATION (Added in Bonus-C)
 # ==============================================
 
 variable "manage_route53_in_terraform" {
@@ -109,25 +199,103 @@ variable "route53_hosted_zone_id" {
 }
 ```
 
-> **SOCRATIC Q&A**
->
-> ***Q:** Why would someone NOT want Terraform to manage their Route53 zone?*
->
-> **A (Explain Like I'm 10):** Imagine you already have a family address book that everyone uses. Creating a NEW address book in Terraform means you'd have two books—confusing! If your domain's DNS is already set up in Route53 (maybe by another team, or manually), you don't want Terraform to create a duplicate. Instead, you tell Terraform: "Here's the ID of the existing address book—just add entries to it."
->
-> **Evaluator Question:** *What problems occur if you accidentally create a duplicate hosted zone for the same domain?*
->
-> **Model Answer:** DNS chaos: (1) Your domain registrar points to ONE zone's name servers, (2) If Terraform creates a SECOND zone, its name servers are different, (3) Records in the second zone are invisible to the internet because the registrar doesn't know about them, (4) You'll waste hours debugging "why doesn't my DNS work?" Common symptom: `terraform apply` succeeds but `dig` returns nothing. Always verify your registrar's NS records match your active zone.
+**Action:** Check if `variable "environment"` already exists in the file:
+
+```bash
+grep -n "variable \"environment\"" variables.tf
+```
+
+**If NO output (variable doesn't exist)**, add this to `variables.tf`:
+
+```hcl
+variable "environment" {
+  description = "Environment name (e.g., dev, staging, prod)"
+  type        = string
+  default     = "dev"
+}
+```
+
+**Action:** Save the file and close your editor.
 
 ---
 
-## Step 2: Create the Route53 Hosted Zone (Conditional)
+### Step 2.3: Verify Variables Are Valid
 
-### Action: Create `bonus_c_route53.tf`
+**Action:** Run Terraform validate:
+
+```bash
+terraform validate
+```
+
+**Expected Output:**
+```
+Success! The configuration is valid.
+```
+
+> [!warning] TROUBLESHOOTING: "No declaration found for var.environment"
+> 
+> **Symptom:** 
+> ```
+> Error: Reference to undeclared input variable
+> No declaration found for "var.environment"
+> ```
+> 
+> **Cause:** The `environment` variable is referenced somewhere but not defined in `variables.tf`.
+> 
+> **Fix:** Add the environment variable to `variables.tf`:
+> ```hcl
+> variable "environment" {
+>   description = "Environment name (e.g., dev, staging, prod)"
+>   type        = string
+>   default     = "dev"
+> }
+> ```
+
+> [!question] SOCRATIC Q&A: Why Conditional Zone Management?
+> 
+> ***Q:** Why would someone NOT want Terraform to manage their Route53 zone?*
+> 
+> **A (Explain Like I'm 10):** Imagine you already have a family address book that everyone uses. Creating a NEW address book in Terraform means you'd have two books—confusing! If your domain's DNS is already set up in Route53 (maybe by another team, or manually in the console), you don't want Terraform to create a duplicate. Instead, you tell Terraform: "Here's the ID of the existing address book—just add entries to it."
+> 
+> **Evaluator Question:** *What problems occur if you accidentally create a duplicate hosted zone for the same domain?*
+> 
+> **Model Answer:** DNS chaos: (1) Your domain registrar points to ONE zone's name servers, (2) If Terraform creates a SECOND zone, its name servers are different, (3) Records in the second zone are invisible to the internet because the registrar doesn't know about them, (4) You'll waste hours debugging "why doesn't my DNS work?" Common symptom: `terraform apply` succeeds but `dig` returns nothing.
+
+---
+
+## PART 3: Create the Route53 Configuration File
+
+### Step 3.1: Create the New File
+
+**Action:** Create a new file called `bonus_c_route53.tf`:
+
+```bash
+touch bonus_c_route53.tf
+```
+
+**Action:** Open the file in your editor:
+
+```bash
+code bonus_c_route53.tf
+# OR: vim bonus_c_route53.tf
+# OR: nano bonus_c_route53.tf
+```
+
+---
+
+### Step 3.2: Add the Hosted Zone Resource
+
+**Action:** Copy and paste this ENTIRE code block into `bonus_c_route53.tf`:
 
 ```hcl
 ############################################
 # BONUS-C: Route53 DNS + ACM Validation
+# 
+# This file creates:
+# 1. Route53 Hosted Zone (conditional)
+# 2. ACM DNS validation records
+# 3. ACM certificate validation resource
+# 4. ALIAS record pointing subdomain → ALB
 ############################################
 
 # ==============================================
@@ -158,29 +326,21 @@ resource "aws_route53_zone" "chewbacca_zone01" {
 # which zone ID to use regardless of how it was created.
 
 locals {
+  # If Terraform manages the zone, use its ID. Otherwise, use the provided ID.
   chewbacca_zone_id = var.manage_route53_in_terraform ? aws_route53_zone.chewbacca_zone01[0].zone_id : var.route53_hosted_zone_id
   
+  # Construct the fully qualified domain name for the app
   chewbacca_app_fqdn = "${var.app_subdomain}.${var.domain_name}"
 }
 ```
 
-> **SOCRATIC Q&A**
->
-> ***Q:** What's that `count = var.manage_route53_in_terraform ? 1 : 0` doing?*
->
-> **A (Explain Like I'm 10):** It's a light switch! When `manage_route53_in_terraform` is `true`, count = 1 means "create ONE of these." When it's `false`, count = 0 means "create ZERO of these"—the resource doesn't exist at all. This lets the same Terraform code work for both scenarios: "make me a new zone" vs. "use my existing zone."
->
-> **Evaluator Question:** *Why use `[0]` when referencing the zone in the local?*
->
-> **Model Answer:** When a resource uses `count`, Terraform treats it as a LIST, even if count is 1. `aws_route53_zone.chewbacca_zone01` becomes a list, so you must access the first (and only) element with `[0]`. Forgetting this causes errors like: `aws_route53_zone.chewbacca_zone01 is a list of objects, not a single object`. This is a common Terraform gotcha that trips up beginners.
+**Action:** Save the file (but keep it open—we'll add more code).
 
 ---
 
-## Step 3: Create ACM DNS Validation Records
+### Step 3.3: Add ACM DNS Validation Records
 
-DNS validation proves to AWS that you control the domain. ACM gives you a special record to add; when Route53 serves that record, ACM says "Yep, they own it!"
-
-### Action: Continue in `bonus_c_route53.tf`
+**Action:** Add this code block to the END of `bonus_c_route53.tf` (after the locals block):
 
 ```hcl
 # ==============================================
@@ -207,7 +367,27 @@ resource "aws_route53_record" "chewbacca_acm_validation_records01" {
   type            = each.value.type
   zone_id         = local.chewbacca_zone_id
 }
+```
 
+**Action:** Save the file.
+
+> [!question] SOCRATIC Q&A: Understanding for_each
+> 
+> ***Q:** What's that `for_each` loop doing? It looks complicated.*
+> 
+> **A (Explain Like I'm 10):** When you request a certificate for `yourdomain.com` AND `www.yourdomain.com`, ACM gives you TWO validation challenges—one for each name. The `for_each` loop says "for EACH challenge ACM gives me, create a DNS record." It's like getting a homework packet with 3 worksheets: you don't write one piece of code per worksheet, you write a loop that handles however many worksheets you get.
+> 
+> **Evaluator Question:** *Why is `allow_overwrite = true` set on the validation records?*
+> 
+> **Model Answer:** If you run `terraform apply` multiple times, or if you're replacing an old certificate, the validation record names might already exist. Without `allow_overwrite = true`, Terraform fails with "record already exists." This setting tells Terraform: "If the record exists, update it instead of erroring."
+
+---
+
+### Step 3.4: Add ACM Certificate Validation Resource
+
+**Action:** Add this code block to the END of `bonus_c_route53.tf`:
+
+```hcl
 # ==============================================
 # ACM CERTIFICATE VALIDATION (DNS Method)
 # ==============================================
@@ -222,14 +402,16 @@ resource "aws_acm_certificate_validation" "chewbacca_acm_validation01_dns" {
 }
 ```
 
-> **SOCRATIC Q&A**
->
+**Action:** Save the file.
+
+> [!question] SOCRATIC Q&A: Why Validation?
+> 
 > ***Q:** Why does ACM need "validation"? Why can't I just request a certificate for any domain?*
->
+> 
 > **A (Explain Like I'm 10):** Imagine anyone could walk into the DMV and say "I'm the President, give me a White House ID card." Chaos! Certificate authorities (like ACM) need PROOF you control the domain before giving you a certificate. Otherwise, bad guys could get certificates for `google.com` and trick people. DNS validation proves you control the domain's DNS—if you can add the secret record, you must be the real owner.
->
+> 
 > **Evaluator Question:** *What are the differences between DNS validation and email validation for ACM certificates?*
->
+> 
 > **Model Answer:** 
 > | DNS Validation | Email Validation |
 > |----------------|------------------|
@@ -237,34 +419,20 @@ resource "aws_acm_certificate_validation" "chewbacca_acm_validation01_dns" {
 > | Fully automatable in Terraform | Requires manual human action |
 > | Certificate auto-renews | Must re-validate on renewal |
 > | Preferred for production | Good for quick one-time certs |
-> 
-> DNS validation is the industry standard because it enables zero-touch certificate renewal—critical for production systems where you don't want 2 AM pages about expiring certs.
-
-> **SOCRATIC Q&A**
->
-> ***Q:** What's that `for_each` loop doing? It looks complicated.*
->
-> **A (Explain Like I'm 10):** When you request a certificate for `chewbacca-growl.com` AND `app.chewbacca-growl.com`, ACM gives you TWO validation challenges—one for each name. The `for_each` loop says "for EACH challenge ACM gives me, create a DNS record." It's like getting a homework packet with 3 worksheets: you don't write one piece of code per worksheet, you write a loop that handles however many worksheets you get.
->
-> **Evaluator Question:** *Why is `allow_overwrite = true` set on the validation records?*
->
-> **Model Answer:** If you run `terraform apply` multiple times, or if you're replacing an old certificate, the validation record names might already exist. Without `allow_overwrite = true`, Terraform fails with "record already exists." This setting tells Terraform: "If the record exists, update it instead of erroring." It's safe for validation records because they're machine-generated and should always match ACM's requirements.
 
 ---
 
-## Step 4: Create ALIAS Record for App Subdomain
+### Step 3.5: Add ALIAS Record for App Subdomain
 
-The ALIAS record is the "phone book entry" that points `app.chewbacca-growl.com` to your ALB.
-
-### Action: Continue in `bonus_c_route53.tf`
+**Action:** Add this code block to the END of `bonus_c_route53.tf`:
 
 ```hcl
 # ==============================================
-# ALIAS RECORD: app.chewbacca-growl.com -> ALB
+# ALIAS RECORD: subdomain → ALB
 # ==============================================
 
 # Explanation: This is the holographic sign outside the cantina—
-# "app.chewbacca-growl.com" now points to your ALB. 
+# "www.yourdomain.com" now points to your ALB. 
 # Visitors see your domain, not AWS's ugly URL.
 
 resource "aws_route53_record" "chewbacca_app_alias01" {
@@ -280,55 +448,78 @@ resource "aws_route53_record" "chewbacca_app_alias01" {
 }
 ```
 
-> **SOCRATIC Q&A**
->
-> ***Q:** Why use an ALIAS record instead of a regular CNAME?*
->
-> **A (Explain Like I'm 10):** Regular CNAME records are like sticky notes that say "go ask someone else." If you ask for `app.example.com`, the CNAME says "actually, go ask `xyz.elb.amazonaws.com`"—that's TWO lookups. ALIAS is like a smart sticky note that does the work FOR you. It looks up the ALB's actual IP addresses and gives them directly. Faster! Plus, CNAMEs can't be used at the "zone apex" (`chewbacca-growl.com` with no subdomain), but ALIAS can.
->
-> **Evaluator Question:** *What does `evaluate_target_health = true` do?*
->
-> **Model Answer:** Route53 performs health checks on the ALB. If the ALB is unhealthy (no healthy targets, or ALB itself is down), Route53 can stop sending traffic to it. This is critical for multi-region failover architectures: if your primary ALB dies, Route53 can route to a backup. For single-region setups, it still provides visibility—Route53 health check metrics show ALB availability.
+**Action:** Save and close the file.
 
-> **SOCRATIC Q&A**
->
-> ***Q:** The ALB already has a `zone_id`? I thought zone IDs were for hosted zones?*
->
-> **A (Explain Like I'm 10):** Great catch! AWS load balancers live in special AWS-managed hosted zones (one per region). When you create an ALIAS to an ALB, you need to tell Route53 "this ALB lives in AWS's zone for us-east-1 ELBs." It's like mailing a letter: you need both the address (`dns_name`) AND the zip code (`zone_id`). AWS provides both values automatically on the ALB resource.
->
-> **Evaluator Question:** *How would you add a second ALIAS for the zone apex (`chewbacca-growl.com` without `app.`)?*
->
-> **Model Answer:** Duplicate the resource with different `name`:
-> ```hcl
-> resource "aws_route53_record" "chewbacca_apex_alias01" {
->   zone_id = local.chewbacca_zone_id
->   name    = var.domain_name  # No subdomain!
->   type    = "A"
->   alias {
->     name                   = aws_lb.chewbacca_alb01.dns_name
->     zone_id                = aws_lb.chewbacca_alb01.zone_id
->     evaluate_target_health = true
->   }
-> }
-> ```
-> This enables both `chewbacca-growl.com` AND `app.chewbacca-growl.com` to reach your ALB.
+> [!question] SOCRATIC Q&A: ALIAS vs CNAME
+> 
+> ***Q:** Why use an ALIAS record instead of a regular CNAME?*
+> 
+> **A (Explain Like I'm 10):** Regular CNAME records are like sticky notes that say "go ask someone else." If you ask for `www.example.com`, the CNAME says "actually, go ask `xyz.elb.amazonaws.com`"—that's TWO lookups. ALIAS is like a smart sticky note that does the work FOR you. It looks up the ALB's actual IP addresses and gives them directly. Faster! Plus, CNAMEs can't be used at the "zone apex" (`example.com` with no subdomain), but ALIAS can.
+> 
+> **Evaluator Question:** *What does `evaluate_target_health = true` do?*
+> 
+> **Model Answer:** Route53 performs health checks on the ALB. If the ALB is unhealthy (no healthy targets, or ALB itself is down), Route53 can stop sending traffic to it. This is critical for multi-region failover architectures: if your primary ALB dies, Route53 can route to a backup.
 
 ---
 
-## Step 5: Update HTTPS Listener Dependency
+### Step 3.6: Validate the Complete File
 
-The HTTPS listener needs the certificate to be ISSUED before it can use it. Add a dependency on DNS validation.
+**Action:** Verify the file structure is correct:
 
-### Action: Update `bonus_b.tf` HTTPS Listener
+```bash
+# Check the file exists and has content
+wc -l bonus_c_route53.tf
+```
+
+**Expected Output:** Approximately 80-100 lines.
+
+**Action:** Run Terraform validate:
+
+```bash
+terraform validate
+```
+
+**Expected Output:**
+```
+Success! The configuration is valid.
+```
+
+---
+
+## PART 4: Update HTTPS Listener Dependency
+
+The HTTPS listener needs to wait for certificate validation to complete before it can use the certificate.
+
+### Step 4.1: Locate the HTTPS Listener in `bonus_b.tf`
+
+**Action:** Find the HTTPS listener resource:
+
+```bash
+grep -n "aws_lb_listener.*https" bonus_b.tf
+```
+
+**Expected Output:** A line number showing where the HTTPS listener is defined.
+
+---
+
+### Step 4.2: Update the HTTPS Listener
+
+**Action:** Open `bonus_b.tf` in your editor:
+
+```bash
+code bonus_b.tf
+```
+
+**Action:** Find the `aws_lb_listener` resource for HTTPS (port 443) and ensure it has:
+1. `certificate_arn` pointing to the certificate (not the validation)
+2. `depends_on` pointing to the DNS validation resource
+
+**Action:** Update (or verify) the HTTPS listener looks like this:
 
 ```hcl
 # ==============================================
 # HTTPS LISTENER (Updated for DNS Validation)
 # ==============================================
-
-# Explanation: The HTTPS listener is the real hangar bay—TLS terminates here, 
-# then traffic flows to private targets. It MUST wait for the certificate 
-# to be validated, or it fails with "certificate not yet issued."
 
 resource "aws_lb_listener" "chewbacca_https_listener01" {
   load_balancer_arn = aws_lb.chewbacca_alb01.arn
@@ -345,37 +536,42 @@ resource "aws_lb_listener" "chewbacca_https_listener01" {
   }
 
   # CRITICAL: Wait for DNS validation to complete!
-  # Without this, Terraform might try to create the listener before 
-  # the certificate is issued, causing failures.
   depends_on = [
     aws_acm_certificate_validation.chewbacca_acm_validation01_dns
   ]
 }
 ```
 
-> **SOCRATIC Q&A**
->
+**Action:** Save and close the file.
+
+> [!question] SOCRATIC Q&A: Why depends_on?
+> 
 > ***Q:** Why do we need `depends_on` here? Doesn't Terraform figure out dependencies automatically?*
->
+> 
 > **A (Explain Like I'm 10):** Terraform is smart, but not THAT smart. It sees that the listener uses `aws_acm_certificate.chewbacca_acm_cert01.arn` and waits for the certificate to be CREATED. But "created" isn't the same as "validated and issued!" The certificate exists immediately, but it's in PENDING_VALIDATION status until DNS validation completes. `depends_on` says: "Don't just wait for the certificate to exist—wait for the VALIDATION resource to complete too."
->
+> 
 > **Evaluator Question:** *What error would you see if you forgot the `depends_on`?*
->
-> **Model Answer:** You'd likely see: `UnsupportedCertificate: The certificate 'arn:aws:acm:...' must have a fully-qualified domain name, a supported signature, and a supported key size.` This misleading error actually means the certificate isn't validated yet. The listener creation races ahead of validation. Adding `depends_on` forces Terraform to wait. This is a VERY common production issue when setting up TLS for the first time.
+> 
+> **Model Answer:** You'd likely see: `UnsupportedCertificate: The certificate 'arn:aws:acm:...' must have a fully-qualified domain name, a supported signature, and a supported key size.` This misleading error actually means the certificate isn't validated yet. The listener creation races ahead of validation.
 
 ---
 
-## Step 6: Add Outputs
+## PART 5: Add Outputs
 
-### Action: Append to `outputs.tf`
+### Step 5.1: Add Route53 Outputs
+
+**Action:** Open `outputs.tf` in your editor:
+
+```bash
+code outputs.tf
+```
+
+**Action:** Add this code block to the END of the file:
 
 ```hcl
 # ==============================================
-# ROUTE53 + DNS OUTPUTS
+# ROUTE53 + DNS OUTPUTS (Added in Bonus-C)
 # ==============================================
-
-# Explanation: Outputs are the nav computer readout—Chewbacca needs 
-# coordinates that humans can paste into browsers.
 
 output "chewbacca_route53_zone_id" {
   description = "Route53 Hosted Zone ID"
@@ -393,107 +589,379 @@ output "chewbacca_route53_name_servers" {
 }
 ```
 
-> **SOCRATIC Q&A**
->
+**Action:** Save and close the file.
+
+> [!question] SOCRATIC Q&A: Why Output Name Servers?
+> 
 > ***Q:** Why output the name servers? What do I do with them?*
->
-> **A (Explain Like I'm 10):** When AWS creates a hosted zone, it assigns name servers (like `ns-123.awsdns-45.com`). These are the "official phone operators" for your domain. But your domain registrar (where you bought `chewbacca-growl.com`) doesn't know about them yet! You must LOG INTO your registrar (GoDaddy, Namecheap, Route53 Registrar, etc.) and UPDATE the name server records to match AWS's. Until you do this, the internet can't find your DNS records.
->
+> 
+> **A (Explain Like I'm 10):** When AWS creates a hosted zone, it assigns name servers (like `ns-123.awsdns-45.com`). These are the "official phone operators" for your domain. But your domain registrar (where you bought the domain) doesn't know about them yet! You must LOG INTO your registrar (GoDaddy, Namecheap, Route53 Registrar, etc.) and UPDATE the name server records to match AWS's. Until you do this, the internet can't find your DNS records.
+> 
 > **Evaluator Question:** *What happens if the registrar's name servers don't match Route53's?*
->
-> **Model Answer:** DNS resolution fails. The registrar tells the internet "ask ns-OLD.registrar.com for chewbacca-growl.com records." That old server doesn't have your Route53 records. Users get NXDOMAIN (domain doesn't exist) or stale data. This is the #1 reason "I set up Route53 but DNS doesn't work." Always verify: `dig NS chewbacca-growl.com` should return Route53's name servers, not your registrar's defaults.
+> 
+> **Model Answer:** DNS resolution fails. The registrar tells the internet "ask ns-OLD.registrar.com for domain records." That old server doesn't have your Route53 records. Users get NXDOMAIN (domain doesn't exist) or stale data. Always verify: `dig NS yourdomain.com` should return Route53's name servers.
 
 ---
 
-## Verification Commands
+## PART 6: Deploy the Infrastructure
 
-### 1. Confirm Hosted Zone Exists
+### Step 6.1: Format and Validate
+
+**Action:** Format all Terraform files:
 
 ```bash
-# If Terraform manages the zone:
+terraform fmt
+```
+
+**Action:** Validate the configuration:
+
+```bash
+terraform validate
+```
+
+**Expected Output:**
+```
+Success! The configuration is valid.
+```
+
+---
+
+### Step 6.2: Review the Plan
+
+**Action:** Generate and review the execution plan:
+
+```bash
+terraform plan
+```
+
+**What to Look For:**
+- `aws_route53_zone.chewbacca_zone01[0]` will be created
+- `aws_route53_record.chewbacca_acm_validation_records01` will be created (multiple)
+- `aws_acm_certificate_validation.chewbacca_acm_validation01_dns` will be created
+- `aws_route53_record.chewbacca_app_alias01` will be created
+
+**Expected:** ~4-6 resources to add.
+
+---
+
+### Step 6.3: Apply the Configuration
+
+**Action:** Apply the changes:
+
+```bash
+terraform apply
+```
+
+**Action:** Review the plan output and type `yes` when prompted.
+
+**Note:** The `aws_acm_certificate_validation` resource may take 2-5 minutes to complete while ACM verifies the DNS records.
+
+**Expected Output:**
+```
+Apply complete! Resources: X added, 0 changed, 0 destroyed.
+
+Outputs:
+
+chewbacca_app_url_https = "https://www.yourdomain.com"
+chewbacca_route53_name_servers = tolist([
+  "ns-xxx.awsdns-xx.com",
+  "ns-xxx.awsdns-xx.net",
+  "ns-xxx.awsdns-xx.co.uk",
+  "ns-xxx.awsdns-xx.org",
+])
+chewbacca_route53_zone_id = "Z1234567890ABC"
+```
+
+> [!warning] TROUBLESHOOTING: terraform apply Hangs on Validation
+> 
+> **Symptom:** `terraform apply` hangs for more than 10 minutes on `aws_acm_certificate_validation`.
+> 
+> **Cause:** ACM can't see the DNS validation records. Usually a name server issue.
+> 
+> **Fix:** 
+> 1. Check your domain registrar has the correct Route53 name servers
+> 2. Verify DNS propagation: `dig NS yourdomain.com`
+> 3. Wait for DNS propagation (can take up to 48 hours for new domains)
+
+---
+
+## PART 7: Verification Commands
+
+### Step 7.1: Get Your Zone ID
+
+**Action:** Export your zone ID for use in subsequent commands:
+
+```bash
+# Replace 'yourdomain.com' with your actual domain
+export ZONE_ID=$(aws route53 list-hosted-zones-by-name \
+  --dns-name yourdomain.com \
+  --query "HostedZones[?Name=='yourdomain.com.'].Id" \
+  --output text | sed 's|/hostedzone/||')
+
+echo "Zone ID: $ZONE_ID"
+```
+
+**Expected Output:** `Zone ID: Z08529463796GXWJTC93E` (your ID will differ)
+
+---
+
+### Step 7.2: Verify Hosted Zone Exists
+
+**Action:** Run:
+
+```bash
 aws route53 list-hosted-zones-by-name \
-  --dns-name chewbacca-growl.com \
-  --query "HostedZones[?Name=='chewbacca-growl.com.'].Id" \
+  --dns-name yourdomain.com \
+  --query "HostedZones[?Name=='yourdomain.com.'].Id" \
   --output text
-
-# Expected: /hostedzone/Z1234567890ABC
 ```
 
-### 2. Confirm DNS Validation Records Exist
+**Expected Output:** `/hostedzone/Z08529463796GXWJTC93E`
+
+---
+
+### Step 7.3: Verify ACM Validation Records Exist
+
+**Action:** Run:
 
 ```bash
 aws route53 list-resource-record-sets \
-  --hosted-zone-id <ZONE_ID> \
-  --query "ResourceRecordSets[?Type=='CNAME' && contains(Name, '_')]"
-
-# Expected: CNAME records starting with _acm-validation or similar
+  --hosted-zone-id $ZONE_ID \
+  --query "ResourceRecordSets[?Type=='CNAME' && contains(Name, '_')]" \
+  --output table
 ```
 
-### 3. Confirm App ALIAS Record Exists
+**Expected Output:** Table showing CNAME records with names starting with `_` (ACM validation records).
+
+---
+
+### Step 7.4: Verify ALIAS Record Exists
+
+**Action:** Run (replace `www` with your `app_subdomain` value):
 
 ```bash
 aws route53 list-resource-record-sets \
-  --hosted-zone-id <ZONE_ID> \
-  --query "ResourceRecordSets[?Name=='app.chewbacca-growl.com.']"
-
-# Expected: Type=A with AliasTarget pointing to ALB
+  --hosted-zone-id $ZONE_ID \
+  --query "ResourceRecordSets[?Name=='www.yourdomain.com.']"
 ```
 
-### 4. Confirm Certificate Is Issued
+**Expected Output:**
+```json
+[
+    {
+        "Name": "www.yourdomain.com.",
+        "Type": "A",
+        "AliasTarget": {
+            "HostedZoneId": "Z1H1FL5HABSF5",
+            "DNSName": "chewbacca-alb01-1234567890.us-west-2.elb.amazonaws.com.",
+            "EvaluateTargetHealth": true
+        }
+    }
+]
+```
+
+> [!warning] TROUBLESHOOTING: ALIAS Record Shows Different Subdomain
+> 
+> **Symptom:** You expected `app.yourdomain.com` but see `www.yourdomain.com` (or vice versa).
+> 
+> **Cause:** Your `app_subdomain` variable is set differently than expected.
+> 
+> **Diagnosis:**
+> ```bash
+> # Check what subdomain is configured
+> grep -r "app_subdomain" *.tf *.tfvars 2>/dev/null
+> 
+> # Or check all records in the zone
+> aws route53 list-resource-record-sets \
+>   --hosted-zone-id $ZONE_ID \
+>   --query "ResourceRecordSets[].{Name:Name,Type:Type}" \
+>   --output table
+> ```
+> 
+> **Fix:** If the subdomain is correct for your use case, use that subdomain in your verification and curl commands. If you need to change it, update `app_subdomain` in your `variables.tf` or `terraform.tfvars` and run `terraform apply`.
+
+---
+
+### Step 7.5: Verify Certificate Is Issued
+
+**Action:** Run:
 
 ```bash
-aws acm describe-certificate \
-  --certificate-arn <CERT_ARN> \
-  --query "Certificate.Status" \
+aws acm list-certificates \
+  --query "CertificateSummaryList[?DomainName=='yourdomain.com'].Status" \
   --output text
-
-# Expected: ISSUED
-# If still PENDING_VALIDATION, DNS propagation may be in progress
 ```
 
-### 5. Confirm HTTPS Works End-to-End
+**Expected Output:** `ISSUED`
+
+**If output is `PENDING_VALIDATION`:** Wait 2-5 minutes and re-run. If it persists beyond 10 minutes, check DNS propagation.
+
+---
+
+### Step 7.6: Verify DNS Resolution
+
+**Action:** Run (replace with your actual subdomain):
 
 ```bash
-# Test HTTPS connection
-curl -I https://app.chewbacca-growl.com
-
-# Expected: HTTP/1.1 200 OK (or 301 → 200)
-
-# Verify certificate details
-echo | openssl s_client -connect app.chewbacca-growl.com:443 -servername app.chewbacca-growl.com 2>/dev/null | openssl x509 -noout -subject -dates
-
-# Expected: Shows your domain name and valid dates
+dig www.yourdomain.com A +short
 ```
 
-### 6. Verify DNS Resolution
+**Expected Output:** One or more IP addresses (ALB's IPs).
+
+---
+
+### Step 7.7: Test HTTPS End-to-End
+
+**Action:** Run (replace with your actual subdomain):
 
 ```bash
-# Check that DNS resolves to ALB IPs
-dig app.chewbacca-growl.com A +short
+curl -I https://www.yourdomain.com/list
+```
 
-# Expected: Multiple IP addresses (ALB's IPs)
+**Expected Output:**
+```
+HTTP/2 200
+date: Wed, 04 Feb 2026 01:31:17 GMT
+content-type: text/html; charset=utf-8
+...
+```
 
-# Verify name servers are Route53's
-dig NS chewbacca-growl.com +short
+> [!warning] TROUBLESHOOTING: HTTP 404 Response
+> 
+> **Symptom:** `curl -I https://www.yourdomain.com` returns `HTTP/2 404`
+> 
+> **This is NOT an infrastructure failure!** 
+> 
+> **Cause:** Your Flask application doesn't have a route for `/`. The 404 comes from your app, not from AWS.
+> 
+> **Evidence:** Look at the response headers:
+> ```
+> server: Werkzeug/3.1.5 Python/3.9.25
+> ```
+> This proves traffic reached your Flask app.
+> 
+> **Fix:** Test an endpoint your app actually has:
+> ```bash
+> curl -I https://www.yourdomain.com/list
+> curl -I https://www.yourdomain.com/init
+> ```
+> 
+> **Or add a root route to your Flask app:**
+> ```python
+> @app.route('/')
+> def home():
+>     return "Chewbacca says RRWWWGG! App is running."
+> ```
 
-# Expected: ns-xxxx.awsdns-xx.com (4 servers)
+---
+
+### Step 7.8: Verify Certificate Details (Optional)
+
+**Action:** Run:
+
+```bash
+echo | openssl s_client -connect www.yourdomain.com:443 -servername www.yourdomain.com 2>/dev/null | openssl x509 -noout -subject -issuer
+```
+
+**Expected Output:**
+```
+subject=CN = yourdomain.com
+issuer=C = US, O = Amazon, CN = Amazon RSA 2048 M02
 ```
 
 ---
 
-## Common Failure Modes & Troubleshooting
+## PART 8: All-in-One Verification Summary
+
+**Action:** Run this comprehensive verification script (replace `yourdomain.com` and `www` with your values):
+
+```bash
+DOMAIN="yourdomain.com"
+SUBDOMAIN="www"
+
+echo "=== 1. Zone ID ===" && \
+aws route53 list-hosted-zones-by-name --dns-name $DOMAIN --query "HostedZones[0].Id" --output text && \
+echo "" && \
+echo "=== 2. Certificate Status ===" && \
+aws acm list-certificates --query "CertificateSummaryList[?DomainName=='$DOMAIN'].Status" --output text && \
+echo "" && \
+echo "=== 3. DNS Resolution ===" && \
+dig $SUBDOMAIN.$DOMAIN A +short && \
+echo "" && \
+echo "=== 4. HTTPS Status Code ===" && \
+curl -s -o /dev/null -w "%{http_code}" https://$SUBDOMAIN.$DOMAIN/list
+```
+
+**Expected Output:**
+```
+=== 1. Zone ID ===
+/hostedzone/Z08529463796GXWJTC93E
+
+=== 2. Certificate Status ===
+ISSUED
+
+=== 3. DNS Resolution ===
+52.10.123.45
+34.210.67.89
+
+=== 4. HTTPS Status Code ===
+200
+```
+
+---
+
+## 📋 Verification Checklist
+
+| # | Check | Command | Expected |
+|---|-------|---------|----------|
+| 1 | Hosted Zone exists | `aws route53 list-hosted-zones-by-name --dns-name yourdomain.com` | Zone ID returned |
+| 2 | ACM validation records | `aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID --query "ResourceRecordSets[?Type=='CNAME']"` | CNAME records with `_` prefix |
+| 3 | ALIAS record exists | `aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID --query "ResourceRecordSets[?Name=='www.yourdomain.com.']"` | Type A with AliasTarget |
+| 4 | Certificate issued | `aws acm list-certificates --query "CertificateSummaryList[?DomainName=='yourdomain.com'].Status"` | `ISSUED` |
+| 5 | DNS resolves | `dig www.yourdomain.com A +short` | IP addresses |
+| 6 | HTTPS works | `curl -I https://www.yourdomain.com/list` | `HTTP/2 200` |
+
+---
+
+## 🔧 Common Failure Modes & Troubleshooting
 
 | Symptom | Likely Cause | Fix |
 |---------|--------------|-----|
-| Certificate stuck in PENDING_VALIDATION | DNS validation records not propagated | Check Route53 has the CNAME records; wait up to 30 minutes |
+| `No declaration found for "var.environment"` | Variable not defined | Add `variable "environment"` to variables.tf |
+| `No state file was found!` | Wrong directory | Find correct directory with `find ~ -name "terraform.tfstate"` |
+| `Error: No configuration files` | Wrong directory | Navigate to directory containing `.tf` files |
+| Certificate stuck in PENDING_VALIDATION | DNS validation records not propagated | Wait 5-30 minutes; verify NS records at registrar |
 | `dig` returns NXDOMAIN | Registrar NS records don't match Route53 | Update registrar to use Route53's name servers |
-| HTTPS shows certificate error | Accessing via wrong domain (ALB DNS instead of custom) | Always use `https://app.chewbacca-growl.com` |
-| `terraform apply` hangs on validation | DNS not reachable from AWS | Verify NS records at registrar; check for typos |
-| Listener creation fails | Certificate not yet issued | Add `depends_on` for validation resource |
+| HTTPS shows certificate error | Accessing via ALB DNS instead of custom domain | Always use `https://www.yourdomain.com` |
+| ALIAS record has wrong subdomain | `app_subdomain` variable set differently | Check variable value; update if needed |
+| HTTP 404 on curl | Flask app has no route for `/` | Test `/list` or `/init` endpoints instead |
+| `terraform apply` hangs on validation | DNS not reachable from AWS | Verify NS records; wait for propagation |
 
 ---
 
-## Complete File: `bonus_c_route53.tf`
+## 🎯 What This Lab Proves About You
+
+If you complete Bonus-C, you've demonstrated:
+
+| Skill | Evidence |
+|-------|----------|
+| **DNS Management** | Created hosted zone, validation records, ALIAS records |
+| **Certificate Lifecycle** | Automated DNS validation for TLS certificates |
+| **Infrastructure as Code** | Terraform-managed DNS and certificate validation |
+| **Production Patterns** | ALIAS records, health checks, auto-renewal setup |
+| **Troubleshooting** | Diagnosed and resolved real infrastructure issues |
+
+> [!tip] Interview Statement
+> 
+> **"I can configure DNS, TLS certificates, and secure ingress using Terraform with automated certificate validation and renewal."**
+> 
+> This is exactly how production companies ship. You're operating at the level of a mid-level cloud engineer.
+
+---
+
+## 📁 Complete File Reference
+
+### `bonus_c_route53.tf` (Complete)
 
 ```hcl
 ############################################
@@ -557,7 +1025,7 @@ resource "aws_acm_certificate_validation" "chewbacca_acm_validation01_dns" {
 }
 
 # ==============================================
-# ALIAS RECORD: app.chewbacca-growl.com -> ALB
+# ALIAS RECORD: subdomain -> ALB
 # ==============================================
 
 resource "aws_route53_record" "chewbacca_app_alias01" {
@@ -573,44 +1041,58 @@ resource "aws_route53_record" "chewbacca_app_alias01" {
 }
 ```
 
+### Variables to Add to `variables.tf`
+
+```hcl
+# ==============================================
+# ROUTE53 CONFIGURATION (Added in Bonus-C)
+# ==============================================
+
+variable "manage_route53_in_terraform" {
+  description = "If true, create/manage Route53 hosted zone in Terraform. If false, use existing zone."
+  type        = bool
+  default     = true
+}
+
+variable "route53_hosted_zone_id" {
+  description = "If manage_route53_in_terraform=false, provide existing Hosted Zone ID."
+  type        = string
+  default     = ""
+}
+
+variable "environment" {
+  description = "Environment name (e.g., dev, staging, prod)"
+  type        = string
+  default     = "dev"
+}
+```
+
+### Outputs to Add to `outputs.tf`
+
+```hcl
+# ==============================================
+# ROUTE53 + DNS OUTPUTS (Added in Bonus-C)
+# ==============================================
+
+output "chewbacca_route53_zone_id" {
+  description = "Route53 Hosted Zone ID"
+  value       = local.chewbacca_zone_id
+}
+
+output "chewbacca_app_url_https" {
+  description = "HTTPS URL for the application"
+  value       = "https://${var.app_subdomain}.${var.domain_name}"
+}
+
+output "chewbacca_route53_name_servers" {
+  description = "Name servers for the hosted zone (update your domain registrar!)"
+  value       = var.manage_route53_in_terraform ? aws_route53_zone.chewbacca_zone01[0].name_servers : ["Using existing zone - check console for NS records"]
+}
+```
+
 ---
 
-## Reflection Questions
-
-**A) Why is DNS validation preferred over email validation for production certificates?**
-
-DNS validation enables automatic certificate renewal without human intervention. Email validation requires someone to click a link every time the certificate renews (typically every 13 months). At 3 AM. On a holiday. DNS validation = operational maturity.
-
-**B) What's the relationship between your domain registrar and Route53?**
-
-The registrar is where you BOUGHT the domain and controls the "root" NS records. Route53 is where you MANAGE the domain's DNS records. The registrar must point to Route53's name servers for Route53 to have authority. Think of registrar as the deed holder, Route53 as the property manager.
-
-**C) Why can't you use CNAME records at the zone apex?**
-
-DNS RFC standards prohibit CNAMEs at the zone apex (the "naked" domain like `example.com`) because CNAME means "this name is an ALIAS for another name" and conflicts with other required records (SOA, NS) at the apex. ALIAS records are an AWS-specific workaround that resolves to A/AAAA records internally.
-
-**D) How does ACM certificate renewal work with DNS validation?**
-
-ACM automatically renews certificates ~60 days before expiration. As long as the DNS validation records still exist in Route53, ACM re-validates automatically. If you delete the validation records, renewal fails and your certificate expires. Leave them forever!
-
----
-
-## What This Lab Proves About You
-
-*If you complete Bonus-C, you've demonstrated:*
-
-- Understanding of DNS fundamentals (zones, records, resolution)
-- Certificate lifecycle management (request, validate, issue)
-- Infrastructure-as-code for domain management
-- Production TLS patterns (ALIAS, health checks, auto-renewal)
-
-> **"I can configure DNS, TLS certificates, and secure ingress using Terraform."**
-
-This is exactly how companies ship. You're operating at the level of a mid-level cloud engineer, not a student clicking around.
-
----
-
-## What's Next: Bonus-D
+## 🔜 What's Next: Bonus-D
 
 **Bonus-D adds:**
 - Zone apex ALIAS record (naked domain → ALB)
