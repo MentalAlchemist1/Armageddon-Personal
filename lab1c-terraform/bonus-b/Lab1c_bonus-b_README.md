@@ -1,17 +1,17 @@
-
 # LAB 1C BONUS-B: ALB + TLS + WAF + Dashboard
 
-*Enhanced Socratic Q&A Guide*
+## Enhanced Socratic Q&A Guide (Step-by-Step)
 
 ---
 
 > [!warning] PREREQUISITE
 > Lab 1C with Bonus-A must be completed and verified before starting Bonus-B. You must have:
-> - VPC with public and private subnets
+> - VPC with public and private subnets (`aws_vpc.main`, `aws_subnet.public[0]`, `aws_subnet.private[0]`)
 > - VPC Endpoints (SSM, CloudWatch Logs, Secrets Manager, S3)
-> - Private EC2 instance (no public IP) accessible via Session Manager
+> - Private EC2 instance (`aws_instance.app`) accessible via Session Manager
+> - EC2 Security Group (`aws_security_group.ec2`)
 > - RDS MySQL in private subnet
-> - SNS Topic for alerts
+> - SNS Topic for alerts (`aws_sns_topic.alerts`)
 > - Working EC2 → RDS connectivity
 
 ---
@@ -29,13 +29,25 @@ Bonus-B transforms your infrastructure into a **production-grade enterprise patt
 | CloudWatch Dashboard | Visual monitoring | Operational awareness |
 | SNS Alarm (5xx) | Error spike detection | Incident response |
 
-**This is exactly how modern companies ship: IaC + private compute + managed ingress + TLS + WAF + monitoring + paging.**
-
-*If you can Terraform this, you're no longer "a student who clicked around" — you're a junior cloud engineer.*
-
 ---
 
-## Target Architecture - In Progress
+## Target Architecture
+
+```
+Internet 
+    ↓
+[Route53: www.yourdomain.com]
+    ↓
+[WAF] → Blocks SQL injection, XSS, known exploits
+    ↓
+[ALB: TLS termination, HTTP→HTTPS redirect]
+    ↓
+[Target Group: Health checks on /health]
+    ↓
+[Private EC2: Flask app on port 80]
+    ↓
+[RDS MySQL: Private subnet]
+```
 
 ---
 
@@ -55,22 +67,109 @@ Bonus-B transforms your infrastructure into a **production-grade enterprise patt
 
 ---
 
-## Terraform File Structure for Bonus-B
+## Files You Will Create/Modify
 
-| File | Purpose |
-|------|---------|
-| `variables.tf` | Add domain and certificate variables |
-| `bonus_b.tf` | ALB, Target Group, Listeners, WAF, Dashboard, Alarm |
-| `bonus_b_outputs.tf` | ALB DNS, WAF ARN, Dashboard URL |
-| `route53.tf` (optional) | DNS records if using Route53 |
+| File | Action | Purpose |
+|------|--------|---------|
+| `variables.tf` | MODIFY | Add domain and certificate variables |
+| `bonus_b.tf` | CREATE | ALB, Target Group, Listeners, WAF, Dashboard, Alarm, Route53 |
+| `bonus_b_outputs.tf` | CREATE | ALB DNS, WAF ARN, Dashboard URL |
+| `outputs.tf` | MODIFY | Remove obsolete outputs that conflict |
 
 ---
 
-## PART 1: Variables Setup
+## PART 1: Prerequisites Check
 
-### Step 1.1: Add Bonus-B Variables
+### Step 1.1: Verify Your Existing Resources
 
-**Action:** Append these to your existing `variables.tf`:
+Before starting, confirm your existing Terraform resources are named correctly. Run:
+
+```bash
+cd ~/path/to/your/terraform-files
+terraform state list | grep -E "(vpc|security_group|subnet|instance|sns)"
+```
+
+**Expected output should include:**
+```
+aws_vpc.main
+aws_security_group.ec2
+aws_subnet.public[0]
+aws_subnet.public[1]
+aws_subnet.private[0]
+aws_subnet.private[1]
+aws_instance.app
+aws_sns_topic.alerts
+```
+
+> [!warning] CRITICAL: Resource Names
+> If your resources have different names (e.g., `aws_vpc.chewbacca_vpc01` instead of `aws_vpc.main`), you must adjust ALL references in the code below to match YOUR resource names.
+
+### Step 1.2: Verify You Have an ACM Certificate
+
+You need an ACM certificate **in the same region as your ALB** (e.g., us-west-2).
+
+**Run this command to list your certificates:**
+
+```bash
+aws acm list-certificates --region us-west-2
+```
+
+**Expected output:**
+```json
+{
+    "CertificateSummaryList": [
+        {
+            "CertificateArn": "arn:aws:acm:us-west-2:ACCOUNT_ID:certificate/CERTIFICATE_ID",
+            "DomainName": "yourdomain.com"
+        }
+    ]
+}
+```
+
+**If you don't have a certificate, create one:**
+
+1. Go to AWS Console → Certificate Manager → Request certificate
+2. Request a public certificate
+3. Domain name: `yourdomain.com`
+4. Add another name: `*.yourdomain.com` (wildcard covers all subdomains)
+5. Validation method: DNS validation
+6. Complete DNS validation (add CNAME records to Route53)
+7. Wait for status to show "Issued"
+
+### Step 1.3: Check What Subdomains Your Certificate Covers
+
+**Run this command (replace with YOUR certificate ARN):**
+
+```bash
+aws acm describe-certificate \
+  --certificate-arn "arn:aws:acm:us-west-2:YOUR_ACCOUNT:certificate/YOUR_CERT_ID" \
+  --region us-west-2 \
+  --query "Certificate.SubjectAlternativeNames"
+```
+
+**Example output:**
+```json
+[
+    "wheresjack.com",
+    "www.wheresjack.com"
+]
+```
+
+> [!warning] IMPORTANT: Subdomain Matching
+> Your `app_subdomain` variable MUST match a domain covered by your certificate.
+> - If certificate covers `www.yourdomain.com` → use `app_subdomain = "www"`
+> - If certificate covers `*.yourdomain.com` (wildcard) → use any subdomain (`app`, `www`, `api`, etc.)
+> - If certificate only covers `yourdomain.com` → you can only use the apex domain (more complex setup)
+
+---
+
+## PART 2: Variables Setup
+
+### Step 2.1: Add Bonus-B Variables to variables.tf
+
+**Action:** Open `variables.tf` in your editor.
+
+**Action:** Add the following block at the END of the file (after all existing variables):
 
 ```hcl
 # ====================
@@ -78,21 +177,21 @@ Bonus-B transforms your infrastructure into a **production-grade enterprise patt
 # ====================
 
 variable "domain_name" {
-  description = "Root domain name (e.g., chewbacca-growl.com)"
+  description = "Root domain name (e.g., wheresjack.com)"
   type        = string
-  default     = "chewbacca-growl.com"
+  default     = "yourdomain.com"  # ← CHANGE THIS to your domain
 }
 
 variable "app_subdomain" {
-  description = "Subdomain for the application (e.g., app)"
+  description = "Subdomain for the application (must be covered by your ACM certificate)"
   type        = string
-  default     = "app"
+  default     = "www"  # ← CHANGE THIS if your cert covers a different subdomain
 }
 
 variable "acm_certificate_arn" {
-  description = "ARN of ACM certificate for TLS (must be validated)"
+  description = "ARN of ACM certificate for TLS (must be validated and in same region as ALB)"
   type        = string
-  # You'll get this after creating the certificate
+  default     = "arn:aws:acm:us-west-2:YOUR_ACCOUNT:certificate/YOUR_CERT_ID"  # ← CHANGE THIS
 }
 
 variable "app_port" {
@@ -101,6 +200,13 @@ variable "app_port" {
   default     = 80
 }
 ```
+
+**Action:** Replace the placeholder values:
+- `yourdomain.com` → Your actual domain (e.g., `wheresjack.com`)
+- `www` → The subdomain your certificate covers (check Step 1.3 output)
+- `YOUR_ACCOUNT:certificate/YOUR_CERT_ID` → Your actual certificate ARN from Step 1.2
+
+**Action:** Save the file.
 
 > [!question] SOCRATIC Q&A
 > 
@@ -112,161 +218,43 @@ variable "app_port" {
 > 
 > **Model Answer:** Variables centralize values that might change or be reused. If `domain_name` appears in 10 resources, changing the variable once updates all 10. Without variables, you'd search-and-replace across files — error-prone and time-consuming. Variables also enable environment-specific `.tfvars` files (dev.tfvars, prod.tfvars) that deploy the same infrastructure to different domains.
 
----
+### Step 2.2: Validate Variables Syntax
 
-## PART 2: TLS Certificate (ACM)
+**Action:** Run:
 
-### Step 2.1: Understanding TLS and ACM
-
-> [!question] SOCRATIC Q&A
-> 
-> ***Q:** Why do we need TLS (HTTPS)? HTTP works fine for testing.*
-> 
-> **A (Explain Like I'm 10):** Imagine sending a postcard vs. a sealed letter. A postcard (HTTP) can be read by anyone who handles it — the mail carrier, the sorting facility, nosy neighbors. A sealed letter (HTTPS/TLS) is locked in an envelope that only you and the recipient can open. When you type your password on a website, do you want everyone in the coffee shop WiFi to see it? TLS keeps your secrets secret.
-> 
-> **Evaluator Question:** *What compliance requirements mandate TLS for web applications?*
-> 
-> **Model Answer:** Nearly all modern compliance frameworks require encryption in transit: PCI-DSS (credit cards), HIPAA (healthcare), SOC 2 (security), GDPR (EU privacy). Even without compliance, browsers mark HTTP sites as "Not Secure," destroying user trust. Google ranks HTTPS sites higher in search results. TLS is table stakes for any production application.
-
-### Step 2.2: Request ACM Certificate
-
-> [!warning] IMPORTANT
-> ACM certificates for ALB must be in the **same region** as your ALB. (This is different from CloudFront, which requires us-east-1.)
-
-**Option A: Console (Quick Start)**
-1. AWS Console → Certificate Manager → Request certificate
-2. Request a public certificate
-3. Domain name: `chewbacca-growl.com`
-4. Add another name: `*.chewbacca-growl.com` (wildcard for subdomains)
-5. Validation method: **DNS validation** (recommended)
-6. Copy the certificate ARN for your `variables.tf`
-
-**Option B: Terraform (Full IaC)**
-
-```hcl
-# ====================
-# ACM Certificate
-# ====================
-
-resource "aws_acm_certificate" "chewbacca_cert01" {
-  domain_name               = var.domain_name
-  subject_alternative_names = ["*.${var.domain_name}"]
-  validation_method         = "DNS"
-
-  lifecycle {
-    create_before_destroy = true
-  }
-
-  tags = {
-    Name = "${local.name_prefix}-cert01"
-  }
-}
+```bash
+terraform validate
 ```
 
-> [!question] SOCRATIC Q&A
-> 
-> ***Q:** What's the difference between DNS validation and Email validation for ACM certificates?*
-> 
-> **A (Explain Like I'm 10):** Imagine proving you own a house. **Email validation** is like the bank calling a phone number they found online for that address — if you answer, they believe you. **DNS validation** is like the bank sending an inspector to check if you can actually unlock the front door and change the locks. DNS validation proves you CONTROL the domain's settings, which is stronger proof than just receiving emails.
-> 
-> **Evaluator Question:** *Why is DNS validation preferred for Terraform/IaC workflows?*
-> 
-> **Model Answer:** DNS validation can be fully automated in Terraform — you create the validation records, and ACM automatically validates when they propagate. Email validation requires manual human action (clicking a link), which breaks the IaC automation promise. DNS validation also supports automatic certificate renewal without human intervention, critical for production systems.
-
-### Step 2.3: DNS Validation with Route53
-
-If you're using Route53 for DNS, add this to complete automated validation:
-
-```hcl
-# ====================
-# Route53 Hosted Zone (if not exists)
-# ====================
-
-resource "aws_route53_zone" "chewbacca_zone01" {
-  name = var.domain_name
-
-  tags = {
-    Name = "${local.name_prefix}-zone01"
-  }
-}
-
-# ====================
-# ACM DNS Validation Records
-# ====================
-
-resource "aws_route53_record" "chewbacca_cert_validation01" {
-  for_each = {
-    for dvo in aws_acm_certificate.chewbacca_cert01.domain_validation_options : dvo.domain_name => {
-      name   = dvo.resource_record_name
-      record = dvo.resource_record_value
-      type   = dvo.resource_record_type
-    }
-  }
-
-  allow_overwrite = true
-  name            = each.value.name
-  records         = [each.value.record]
-  ttl             = 60
-  type            = each.value.type
-  zone_id         = aws_route53_zone.chewbacca_zone01.zone_id
-}
-
-# ====================
-# Wait for Certificate Validation
-# ====================
-
-resource "aws_acm_certificate_validation" "chewbacca_cert_validation01" {
-  certificate_arn         = aws_acm_certificate.chewbacca_cert01.arn
-  validation_record_fqdns = [for record in aws_route53_record.chewbacca_cert_validation01 : record.fqdn]
-}
+**Expected output:**
+```
+Success! The configuration is valid.
 ```
 
-> [!question] SOCRATIC Q&A
-> 
-> ***Q:** What does `for_each` do in the validation records resource? Why not just create one record?*
-> 
-> **A (Explain Like I'm 10):** Remember we asked for both `chewbacca-growl.com` AND `*.chewbacca-growl.com`? AWS needs to verify BOTH. `for_each` is like a copy machine — it looks at the certificate's validation requirements and automatically creates one DNS record for EACH domain that needs proving. If you add more domains later, the same code handles them without changes.
-> 
-> **Evaluator Question:** *What happens if `aws_acm_certificate_validation` times out?*
-> 
-> **Model Answer:** The validation resource polls until the certificate status becomes `ISSUED`. Timeout typically means DNS records aren't propagating correctly. Debug steps: (1) Verify Route53 records exist with `aws route53 list-resource-record-sets`, (2) Test DNS propagation with `dig <record_name> CNAME`, (3) Check if using the correct hosted zone. If DNS is managed outside Route53, validation records must be created manually in that provider.
-
-### Step 2.4: Configure Certificate ARN in Variables
-
-> [!warning] REQUIRED FOR CONSOLE/PRE-EXISTING CERTIFICATES
-> 
-> If you created your certificate via the console OR already have an issued certificate:
-> 
-> 1. **Go to ACM Console** → Click on your certificate
-> 2. **Copy the ARN** (looks like `arn:aws:acm:us-west-2:123456789012:certificate/xxxxx`)
-> 3. **Update `variables.tf`:**
->    ```hcl
->    variable "acm_certificate_arn" {
->      description = "ARN of ACM certificate for TLS"
->      type        = string
->      default     = "arn:aws:acm:us-west-2:YOUR_ACCOUNT:certificate/YOUR-CERT-ID"
->    }
->    ```
->
-> If you used **Option B (Full Terraform)**, skip this — the ARN is referenced automatically via `aws_acm_certificate_validation.chewbacca_cert_validation01.certificate_arn`.
+**If you see errors about duplicate variables:**
+- Check for duplicate `variable "domain_name"` blocks
+- Remove any duplicates, keeping only ONE declaration per variable
 
 ---
 
-## PART 3: Application Load Balancer (ALB)
+## PART 3: Create the ALB Infrastructure (bonus_b.tf)
 
-### Step 3.1: Create ALB Security Group
+### Step 3.1: Create the bonus_b.tf File
 
-**Action:** Add to `bonus_b.tf`:
+**Action:** Create a new file named `bonus_b.tf` in your terraform-files directory.
+
+**Action:** Add the following content to `bonus_b.tf`:
 
 ```hcl
 # ====================
-# ALB Security Group
+# Bonus-B: ALB + TLS + WAF + Dashboard
 # ====================
 
-resource "aws_security_group" "chewbacca_alb_sg01" {
+# --- ALB Security Group ---
+resource "aws_security_group" "alb" {
   name        = "${local.name_prefix}-alb-sg01"
   description = "Security group for ALB - allows HTTP/HTTPS from internet"
-  vpc_id      = aws_vpc.chewbacca_vpc01.id
+  vpc_id      = aws_vpc.main.id
 
   # HTTPS from anywhere (internet-facing)
   ingress {
@@ -286,116 +274,107 @@ resource "aws_security_group" "chewbacca_alb_sg01" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # Outbound to targets
+  # Outbound to EC2 targets
   egress {
-    description     = "To EC2 targets"
+    description     = "To EC2 targets on app port"
     from_port       = var.app_port
     to_port         = var.app_port
     protocol        = "tcp"
-    security_groups = [aws_security_group.chewbacca_ec2_sg01.id]
+    security_groups = [aws_security_group.ec2.id]
   }
 
-  tags = {
+  tags = merge(local.common_tags, {
     Name = "${local.name_prefix}-alb-sg01"
-  }
+  })
 }
 ```
 
+**Save the file** (but don't run terraform yet - we'll add more).
+
 > [!question] SOCRATIC Q&A
 > 
-> ***Q:** Why does the ALB security group allow 0.0.0.0/0 when we said that's dangerous for SSH?*
+> ***Q:** Why does the ALB security group allow 0.0.0.0/0 (the entire internet) but the EC2 security group doesn't?*
 > 
-> **A (Explain Like I'm 10):** Remember, 0.0.0.0/0 means "anyone in the world." For SSH (your server's control panel), that's terrifying — like leaving your house keys under the welcome mat. But for HTTP/HTTPS (your website), that's the POINT! You WANT anyone in the world to visit your website. The ALB is like your store's front door — it should be open to customers. SSH is like the store's back office — only employees allowed.
+> **A (Explain Like I'm 10):** Think of a hotel. The front door (ALB) is open to EVERYONE — guests, delivery people, visitors. But the guest rooms (EC2) are locked and only accessible if you have a key from the front desk. The ALB is designed to face the internet (that's its job!). The EC2 is protected BEHIND the ALB and only accepts traffic FROM the ALB — like rooms only accepting people who came through the lobby.
 > 
-> **Evaluator Question:** *Why do we allow HTTP (port 80) if we want HTTPS-only traffic?*
+> **Evaluator Question:** *What's the principle of "defense in depth" and how does this architecture implement it?*
 > 
-> **Model Answer:** We allow HTTP to implement a redirect. Users who type `http://` should be automatically redirected to `https://` rather than seeing a connection error. The ALB listener rule will handle the redirect — no actual HTTP traffic reaches the EC2. This improves user experience while maintaining security. Without the port 80 rule, users typing URLs without `https://` would get "connection refused."
+> **Model Answer:** Defense in depth means multiple independent security layers, so compromising one doesn't expose everything. Here: (1) WAF filters malicious requests before they reach ALB, (2) ALB security group limits ports to 80/443, (3) EC2 security group only accepts traffic from ALB's security group, (4) EC2 has no public IP — can't be directly addressed, (5) RDS only accepts traffic from EC2's security group. An attacker must bypass ALL layers, not just one.
 
-### Step 3.2: Update EC2 Security Group
+### Step 3.2: Add the EC2 Security Group Rule
 
-Your EC2 should ONLY accept traffic from the ALB, not the internet:
+**Action:** Add this block to `bonus_b.tf` (after the ALB security group):
 
 ```hcl
-# ====================
-# Update EC2 SG - Allow ALB Traffic
-# ====================
-
-resource "aws_security_group_rule" "chewbacca_ec2_from_alb01" {
+# --- Allow EC2 to receive traffic from ALB ---
+resource "aws_security_group_rule" "ec2_from_alb" {
   type                     = "ingress"
   from_port                = var.app_port
   to_port                  = var.app_port
   protocol                 = "tcp"
-  security_group_id        = aws_security_group.chewbacca_ec2_sg01.id
-  source_security_group_id = aws_security_group.chewbacca_alb_sg01.id
-  description              = "Allow traffic from ALB only"
+  security_group_id        = aws_security_group.ec2.id
+  source_security_group_id = aws_security_group.alb.id
+  description              = "Allow traffic from ALB"
 }
 ```
 
-[!warning] OPTIONAL BUT RECOMMENDED
-
-For true "private EC2" architecture, you should **remove** the `0.0.0.0/0` HTTP ingress rule from `security_groups.tf`. This forces ALL traffic through the ALB. But you can do that cleanup later — the lab will still work with both rules present.
-
 > [!question] SOCRATIC Q&A
 > 
-> ***Q:** Why use `source_security_group_id` instead of the ALB's IP address?*
+> ***Q:** Why do we use `aws_security_group_rule` as a separate resource instead of adding an inline `ingress` block to the EC2 security group?*
 > 
-> **A (Explain Like I'm 10):** ALBs don't have one fixed IP address — they have MANY that can change! It's like trying to allowlist a delivery company by their truck license plates — they have hundreds of trucks, and the plates change. Instead, you say "anyone wearing a FedEx uniform" (the ALB security group) can deliver. AWS automatically knows which IPs belong to that uniform at any moment.
+> **A (Explain Like I'm 10):** Imagine you have a house with locks on every door. If you want to give your friend a key, you have two choices: (1) Rebuild the entire door with a new lock that accepts both keys, or (2) Just add their key to the existing lock. The separate `aws_security_group_rule` is like adding a key — you don't have to touch the original security group resource. This prevents Terraform from wanting to recreate the EC2 security group (which would be disruptive).
 > 
-> **Evaluator Question:** *What's the security implication if you accidentally left 0.0.0.0/0 on port 80 in the EC2 security group?*
+> **Evaluator Question:** *What happens if you define the same rule both inline and as a separate resource?*
 > 
-> **Model Answer:** Attackers could bypass the ALB entirely and hit EC2 directly. This bypasses: (1) WAF rules attached to ALB, (2) TLS encryption (they'd use HTTP), (3) Access logging at ALB, (4) Rate limiting at ALB. The whole point of this architecture is funneling ALL traffic through the ALB. Direct EC2 access destroys that security model.
+> **Model Answer:** Terraform will detect a conflict and may produce errors or unpredictable behavior. AWS security group rules are identified by their attributes (protocol, port, source). If the same rule exists both inline and as a separate resource, Terraform can't determine which one "owns" it. Best practice: use EITHER inline rules OR separate rule resources, not both for the same security group.
 
-### Step 3.3: Create the Application Load Balancer
+### Step 3.3: Add the Application Load Balancer
+
+**Action:** Add this block to `bonus_b.tf`:
 
 ```hcl
-# ====================
-# Application Load Balancer
-# ====================
-
-resource "aws_lb" "chewbacca_alb01" {
+# --- Application Load Balancer ---
+resource "aws_lb" "main" {
   name               = "${local.name_prefix}-alb01"
-  internal           = false  # Internet-facing
+  internal           = false # Internet-facing
   load_balancer_type = "application"
-  security_groups    = [aws_security_group.chewbacca_alb_sg01.id]
-  
+  security_groups    = [aws_security_group.alb.id]
+
   # ALB goes in PUBLIC subnets (needs internet access)
   subnets = [
-    aws_subnet.chewbacca_public_subnet01.id,
-    aws_subnet.chewbacca_public_subnet02.id
+    aws_subnet.public[0].id,
+    aws_subnet.public[1].id
   ]
 
-  enable_deletion_protection = false  # Set true in production
+  enable_deletion_protection = false # Set true in production
 
-  tags = {
+  tags = merge(local.common_tags, {
     Name = "${local.name_prefix}-alb01"
-  }
+  })
 }
 ```
 
 > [!question] SOCRATIC Q&A
 > 
-> ***Q:** Why does the ALB go in PUBLIC subnets when the EC2 is in PRIVATE subnets?*
+> ***Q:** Why does the ALB go in PUBLIC subnets when the EC2 instances are in PRIVATE subnets?*
 > 
-> **A (Explain Like I'm 10):** Think of a hotel. The **lobby** (ALB in public subnet) faces the street — anyone can walk in from outside. The **guest rooms** (EC2 in private subnet) are deeper inside — you can only reach them THROUGH the lobby. The lobby is designed to handle strangers; the rooms are protected. The ALB is your lobby — it meets the internet so your servers don't have to.
+> **A (Explain Like I'm 10):** Think of a post office. The mailboxes (ALB) are on the street where anyone can drop off mail — that's the PUBLIC subnet. But the sorting room and mail carriers (EC2) are inside the building where only employees can go — that's the PRIVATE subnet. The ALB needs to be publicly accessible so internet users can reach it, but it forwards traffic to EC2 instances that are safely hidden inside.
 > 
-> **Evaluator Question:** *Why does the ALB require subnets in at least two Availability Zones?*
+> **Evaluator Question:** *What happens if you try to create an internet-facing ALB in private subnets?*
 > 
-> **Model Answer:** ALBs are designed for high availability. AWS distributes ALB nodes across the specified AZs. If one AZ has an outage (data center failure, network issue), the ALB continues serving traffic from the other AZ. This is why production architectures always span multiple AZs — it's AWS's fundamental resilience pattern. Terraform will error if you provide only one subnet.
+> **Model Answer:** The ALB creation will fail or the ALB won't be reachable. Internet-facing ALBs need subnets with: (1) An Internet Gateway attached to the VPC, (2) A route table with a 0.0.0.0/0 route to the IGW. Private subnets route through NAT Gateway instead, which allows outbound connections but blocks inbound from the internet. AWS validates this during ALB creation.
 
-### Step 3.4: Create Target Group
+### Step 3.4: Add the Target Group
 
-The Target Group defines WHERE the ALB sends traffic:
+**Action:** Add this block to `bonus_b.tf`:
 
 ```hcl
-# ====================
-# Target Group
-# ====================
-
-resource "aws_lb_target_group" "chewbacca_tg01" {
+# --- Target Group ---
+resource "aws_lb_target_group" "main" {
   name        = "${local.name_prefix}-tg01"
   port        = var.app_port
-  protocol    = "HTTP"  # ALB → EC2 is HTTP (TLS terminates at ALB)
-  vpc_id      = aws_vpc.chewbacca_vpc01.id
+  protocol    = "HTTP" # ALB → EC2 is HTTP (TLS terminates at ALB)
+  vpc_id      = aws_vpc.main.id
   target_type = "instance"
 
   health_check {
@@ -404,77 +383,77 @@ resource "aws_lb_target_group" "chewbacca_tg01" {
     unhealthy_threshold = 3
     timeout             = 5
     interval            = 30
-    path                = "/health"  # Your app needs this endpoint!
+    path                = "/health"
     port                = "traffic-port"
     protocol            = "HTTP"
     matcher             = "200"
   }
 
-  tags = {
+  tags = merge(local.common_tags, {
     Name = "${local.name_prefix}-tg01"
-  }
+  })
 }
 
-# ====================
-# Register EC2 with Target Group
-# ====================
-
-resource "aws_lb_target_group_attachment" "chewbacca_tg_attach01" {
-  target_group_arn = aws_lb_target_group.chewbacca_tg01.arn
-  target_id        = aws_instance.chewbacca_ec201_private_bonus.id
+# --- Register EC2 with Target Group ---
+resource "aws_lb_target_group_attachment" "main" {
+  target_group_arn = aws_lb_target_group.main.arn
+  target_id        = aws_instance.app.id
   port             = var.app_port
 }
 ```
 
-At this point, your Flask app already has:
-- ✅ `/health` endpoint returning 200
-- ✅ Listening on port 80
-- ✅ Running in private subnet
-
-No application changes needed!
-
 > [!question] SOCRATIC Q&A
 > 
-> ***Q:** Why does the Target Group use HTTP when we're setting up HTTPS? Isn't that insecure?*
+> ***Q:** Why is the target group protocol HTTP when we're using HTTPS for the website?*
 > 
-> **A (Explain Like I'm 10):** The HTTPS "envelope" gets opened at the ALB (TLS termination). From ALB to EC2, the traffic is INSIDE your VPC — like passing notes inside your own house. It's already protected by the VPC walls (no internet access to private subnet). Re-encrypting would slow things down and the certificate management on EC2 adds complexity. Think of it as: locked mailbox on the street (TLS), but once inside your house, you just carry the letter normally.
+> **A (Explain Like I'm 10):** Imagine a secure envelope delivery service. The customer seals their letter in a special envelope (HTTPS). The delivery truck (ALB) carries it safely across the city. But once inside the building (VPC), the mail room (ALB) opens the special envelope and puts the letter in a regular envelope (HTTP) for internal delivery to the office (EC2). Why? Because inside the building is already secure — adding another locked envelope just wastes time. This is called "TLS termination" — the ALB handles encryption, so EC2 doesn't have to.
 > 
-> **Evaluator Question:** *What is a health check, and why is the path `/health` important?*
+> **Evaluator Question:** *When would you want end-to-end encryption (HTTPS from ALB to EC2)?*
 > 
-> **Model Answer:** Health checks let the ALB verify targets are functioning. The ALB periodically hits `/health` on each EC2. If it gets a 200 response, the target is "healthy" and receives traffic. If it fails `unhealthy_threshold` times, the ALB stops sending traffic to that target. The `/health` endpoint should be lightweight (no DB calls) and return 200 if the app is running. This is how ALB provides automatic failover — it only sends traffic to working servers.
+> **Model Answer:** When compliance requires data encrypted at ALL times, even inside the VPC. Examples: PCI-DSS for credit card data, HIPAA for healthcare data in some interpretations. Also useful in shared/multi-tenant VPCs where you don't fully trust the network. The tradeoff: more complexity (certificates on EC2), more CPU usage, slightly higher latency. Most production environments use TLS termination at ALB because the VPC is a trusted network boundary.
 
-### Step 3.5: Create ALB Listeners
+### Step 3.5: Add the HTTPS Listener
 
-Listeners define HOW the ALB handles incoming requests:
+**Action:** Add this block to `bonus_b.tf`:
 
 ```hcl
-# ====================
-# HTTPS Listener (443)
-# ====================
-
-resource "aws_lb_listener" "chewbacca_https_listener01" {
-  load_balancer_arn = aws_lb.chewbacca_alb01.arn
+# --- HTTPS Listener (443) ---
+resource "aws_lb_listener" "https" {
+  load_balancer_arn = aws_lb.main.arn
   port              = 443
   protocol          = "HTTPS"
   ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
-  certificate_arn   = aws_acm_certificate_validation.chewbacca_cert_validation01.certificate_arn
+  certificate_arn   = var.acm_certificate_arn
 
   default_action {
     type             = "forward"
-    target_group_arn = aws_lb_target_group.chewbacca_tg01.arn
+    target_group_arn = aws_lb_target_group.main.arn
   }
 
-  tags = {
+  tags = merge(local.common_tags, {
     Name = "${local.name_prefix}-https-listener01"
-  }
+  })
 }
+```
 
-# ====================
-# HTTP Listener (80) - Redirect to HTTPS
-# ====================
+> [!question] SOCRATIC Q&A
+> 
+> ***Q:** What is `ssl_policy` and why does the policy name have "TLS13-1-2" in it?*
+> 
+> **A (Explain Like I'm 10):** Imagine you and your friend have a secret code for passing notes. Over the years, you've made better codes: Version 1.0 was easy to crack, Version 1.1 was better but still had problems, Version 1.2 is pretty good, and Version 1.3 is the newest and strongest. `TLS13-1-2` means "speak the newest code (TLS 1.3) or the pretty-good code (TLS 1.2), but refuse to use the old crackable codes (TLS 1.0, 1.1)." The SSL policy tells the ALB which encryption versions to accept.
+> 
+> **Evaluator Question:** *What vulnerabilities exist in TLS 1.0 and 1.1 that justify disabling them?*
+> 
+> **Model Answer:** TLS 1.0/1.1 are vulnerable to attacks like BEAST, POODLE, and CRIME that can decrypt traffic. PCI-DSS explicitly prohibits TLS 1.0 for payment card data. Major browsers have deprecated TLS 1.0/1.1 since 2020. Using the `ELBSecurityPolicy-TLS13-1-2-2021-06` policy: enforces TLS 1.2 minimum, enables TLS 1.3 for modern clients, disables weak cipher suites. This balances security with compatibility for most clients.
 
-resource "aws_lb_listener" "chewbacca_http_listener01" {
-  load_balancer_arn = aws_lb.chewbacca_alb01.arn
+### Step 3.6: Add the HTTP Listener (Redirect)
+
+**Action:** Add this block to `bonus_b.tf`:
+
+```hcl
+# --- HTTP Listener (80) - Redirect to HTTPS ---
+resource "aws_lb_listener" "http" {
+  load_balancer_arn = aws_lb.main.arn
   port              = 80
   protocol          = "HTTP"
 
@@ -483,65 +462,70 @@ resource "aws_lb_listener" "chewbacca_http_listener01" {
     redirect {
       port        = "443"
       protocol    = "HTTPS"
-      status_code = "HTTP_301"  # Permanent redirect
+      status_code = "HTTP_301" # Permanent redirect
     }
   }
 
-  tags = {
+  tags = merge(local.common_tags, {
     Name = "${local.name_prefix}-http-listener01"
-  }
+  })
 }
 ```
 
 > [!question] SOCRATIC Q&A
 > 
-> ***Q:** What's the difference between HTTP_301 and HTTP_302 redirects?*
+> ***Q:** Why use HTTP_301 (permanent redirect) instead of HTTP_302 (temporary redirect)?*
 > 
-> **A (Explain Like I'm 10):** Imagine you moved to a new house. **301 (Permanent)** is like telling the post office "I moved forever, update all your records." **302 (Temporary)** is like "I'm staying at a friend's for a week, but my real address is still the old one." For HTTP→HTTPS, we use 301 because we ALWAYS want HTTPS. Browsers remember 301 redirects and go directly to HTTPS next time, saving a round trip.
+> **A (Explain Like I'm 10):** Imagine you move to a new house. A 301 is like telling the post office "I moved FOREVER, update all your records." A 302 is like saying "I'm visiting somewhere else temporarily, but I might come back." With 301, browsers REMEMBER and go directly to HTTPS next time without asking the server again. With 302, browsers ask every single time. Since we ALWAYS want HTTPS (not temporary), 301 is correct — it's faster for users and reduces server load.
 > 
-> **Evaluator Question:** *What does the `ssl_policy` parameter control, and why does it matter?*
+> **Evaluator Question:** *What is HSTS and how does it relate to this redirect?*
 > 
-> **Model Answer:** The SSL policy defines which TLS versions and cipher suites the ALB accepts. `ELBSecurityPolicy-TLS13-1-2-2021-06` supports TLS 1.2 and 1.3 with modern ciphers. Older policies allow TLS 1.0/1.1, which have known vulnerabilities. Compliance frameworks (PCI-DSS, HIPAA) require disabling old TLS versions. The policy name includes the date AWS published it — newer policies reflect current security best practices.
+> **Model Answer:** HSTS (HTTP Strict Transport Security) is a header that tells browsers "ONLY use HTTPS for this domain, period." It's stronger than a 301 redirect because: (1) Prevents the initial HTTP request entirely on subsequent visits, (2) Protects against SSL stripping attacks where an attacker intercepts the HTTP→HTTPS redirect. To implement HSTS, add this header to your application responses: `Strict-Transport-Security: max-age=31536000; includeSubDomains`. The 301 redirect handles first-time visitors; HSTS protects returning visitors.
+
+### Step 3.7: Save and Validate
+
+**Action:** Save `bonus_b.tf`.
+
+**Action:** Run:
+
+```bash
+terraform validate
+```
+
+**Expected output:**
+```
+Success! The configuration is valid.
+```
 
 ---
 
-## PART 4: Web Application Firewall (WAF)
+## PART 4: Add WAF (Web Application Firewall)
 
-### Step 4.1: Understanding WAF
+### Step 4.1: Add WAF Web ACL
 
-> [!question] SOCRATIC Q&A
-> 
-> ***Q:** We have security groups already. Why do we need WAF too?*
-> 
-> **A (Explain Like I'm 10):** Security groups are like a bouncer checking IDs at the door — "Are you on the list? What's your IP address?" But they can't read what's INSIDE your bag. WAF is like an X-ray machine — it looks at the CONTENT of each request. "Are you trying to sneak in SQL injection? Is this a known attack pattern? Are you a bot?" Security groups filter WHO can connect; WAF filters WHAT they're sending.
-> 
-> **Evaluator Question:** *What types of attacks does WAF protect against that security groups cannot?*
-> 
-> **Model Answer:** WAF protects against Layer 7 (application layer) attacks: SQL injection, cross-site scripting (XSS), path traversal, request smuggling, known CVE exploits, bad bots, and rate limiting abuse. Security groups only operate at Layer 4 (IP/port) — they can't inspect HTTP content. A valid IP on an allowed port could still send malicious SQL in a form field; only WAF catches that.
-
-### Step 4.2: Create WAF Web ACL
+**Action:** Add this block to `bonus_b.tf` (after the listeners):
 
 ```hcl
 # ====================
 # WAF Web ACL
 # ====================
 
-resource "aws_wafv2_web_acl" "chewbacca_waf01" {
+resource "aws_wafv2_web_acl" "main" {
   name        = "${local.name_prefix}-waf01"
   description = "WAF for ALB - blocks common attacks"
-  scope       = "REGIONAL"  # REGIONAL for ALB, CLOUDFRONT for CloudFront
+  scope       = "REGIONAL" # REGIONAL for ALB, CLOUDFRONT for CloudFront
 
   default_action {
-    allow {}  # Allow by default, block specific threats
+    allow {} # Allow by default, block specific threats
   }
 
-  # AWS Managed Rules - Common Rule Set
+  # Rule 1: AWS Managed Rules - Common Rule Set
   rule {
     name     = "AWSManagedRulesCommonRuleSet"
     priority = 1
 
     override_action {
-      none {}  # Use rule group's actions as-is
+      none {} # Use rule group's actions as-is
     }
 
     statement {
@@ -558,7 +542,7 @@ resource "aws_wafv2_web_acl" "chewbacca_waf01" {
     }
   }
 
-  # AWS Managed Rules - SQL Injection
+  # Rule 2: AWS Managed Rules - SQL Injection
   rule {
     name     = "AWSManagedRulesSQLiRuleSet"
     priority = 2
@@ -581,7 +565,7 @@ resource "aws_wafv2_web_acl" "chewbacca_waf01" {
     }
   }
 
-  # AWS Managed Rules - Known Bad Inputs
+  # Rule 3: AWS Managed Rules - Known Bad Inputs
   rule {
     name     = "AWSManagedRulesKnownBadInputsRuleSet"
     priority = 3
@@ -610,48 +594,62 @@ resource "aws_wafv2_web_acl" "chewbacca_waf01" {
     sampled_requests_enabled   = true
   }
 
-  tags = {
+  tags = merge(local.common_tags, {
     Name = "${local.name_prefix}-waf01"
-  }
+  })
 }
 
-# ====================
-# Associate WAF with ALB
-# ====================
-
-resource "aws_wafv2_web_acl_association" "chewbacca_waf_alb_assoc01" {
-  resource_arn = aws_lb.chewbacca_alb01.arn
-  web_acl_arn  = aws_wafv2_web_acl.chewbacca_waf01.arn
+# --- Associate WAF with ALB ---
+resource "aws_wafv2_web_acl_association" "main" {
+  resource_arn = aws_lb.main.arn
+  web_acl_arn  = aws_wafv2_web_acl.main.arn
 }
 ```
 
 > [!question] SOCRATIC Q&A
 > 
-> ***Q:** What's the difference between `scope = "REGIONAL"` and `scope = "CLOUDFRONT"`?*
+> ***Q:** Security groups already filter traffic. Why do we need WAF too?*
 > 
-> **A (Explain Like I'm 10):** Think of it like local police vs. federal agents. **REGIONAL** WAF protects resources in ONE specific region (your ALB in us-east-1). **CLOUDFRONT** WAF protects CloudFront, which is GLOBAL — it exists everywhere at once. AWS literally stores them in different places. CloudFront WAF must live in us-east-1 (AWS's "headquarters" for global services). Regional WAF lives wherever your ALB is.
+> **A (Explain Like I'm 10):** Security groups are like a bouncer checking IDs at the door — they only look at WHERE you're coming from (IP address) and WHICH door you're using (port). But they don't check what you're CARRYING. WAF is like an X-ray machine that scans your bags for weapons. A hacker might come from a normal IP address through the normal door (passes security group), but their request contains `'; DROP TABLE users; --` (SQL injection attack). The security group says "looks fine!" but WAF says "THAT'S A WEAPON!" and blocks it.
 > 
-> **Evaluator Question:** *Why use AWS Managed Rules instead of writing custom rules?*
+> **Evaluator Question:** *What's the difference between `scope = "REGIONAL"` and `scope = "CLOUDFRONT"`?*
 > 
-> **Model Answer:** AWS Managed Rules are maintained by AWS security researchers who track emerging threats, CVEs, and attack patterns. They're updated automatically without your intervention. Writing custom rules requires deep security expertise and constant maintenance. Managed Rules cover 80%+ of common threats immediately. Custom rules add value for application-specific logic (rate limiting specific endpoints, blocking specific countries), but shouldn't replace the foundational managed rules.
+> **Model Answer:** `REGIONAL` scope creates a WAF that can attach to regional resources: ALB, API Gateway, AppSync in any AWS region. The WAF exists in the same region as the resource. `CLOUDFRONT` scope creates a WAF specifically for CloudFront distributions and MUST be created in us-east-1 (even if your origin is elsewhere). In Lab 2, when we move WAF to CloudFront for origin cloaking, we'll need to create a new WAF with `scope = "CLOUDFRONT"` in us-east-1.
+
+### Step 4.2: Save and Validate
+
+**Action:** Save `bonus_b.tf`.
+
+**Action:** Run:
+
+```bash
+terraform validate
+```
+
+**Expected output:**
+```
+Success! The configuration is valid.
+```
 
 ---
 
-## PART 5: CloudWatch Dashboard
+## PART 5: Add CloudWatch Dashboard
 
-### Step 5.1: Create Operational Dashboard
+### Step 5.1: Add the Dashboard Resource
+
+**Action:** Add this block to `bonus_b.tf`:
 
 ```hcl
 # ====================
 # CloudWatch Dashboard
 # ====================
 
-resource "aws_cloudwatch_dashboard" "chewbacca_dashboard01" {
+resource "aws_cloudwatch_dashboard" "main" {
   dashboard_name = "${local.name_prefix}-dashboard01"
 
   dashboard_body = jsonencode({
     widgets = [
-      # ALB Request Count
+      # Row 1: Request Count
       {
         type   = "metric"
         x      = 0
@@ -662,13 +660,13 @@ resource "aws_cloudwatch_dashboard" "chewbacca_dashboard01" {
           title  = "ALB Request Count"
           region = var.aws_region
           metrics = [
-            ["AWS/ApplicationELB", "RequestCount", "LoadBalancer", aws_lb.chewbacca_alb01.arn_suffix]
+            ["AWS/ApplicationELB", "RequestCount", "LoadBalancer", aws_lb.main.arn_suffix]
           ]
           period = 60
           stat   = "Sum"
         }
       },
-      # ALB 5xx Errors
+      # Row 1: 5xx Errors
       {
         type   = "metric"
         x      = 12
@@ -679,14 +677,14 @@ resource "aws_cloudwatch_dashboard" "chewbacca_dashboard01" {
           title  = "ALB 5xx Errors (Server Errors)"
           region = var.aws_region
           metrics = [
-            ["AWS/ApplicationELB", "HTTPCode_ELB_5XX_Count", "LoadBalancer", aws_lb.chewbacca_alb01.arn_suffix],
-            ["AWS/ApplicationELB", "HTTPCode_Target_5XX_Count", "LoadBalancer", aws_lb.chewbacca_alb01.arn_suffix]
+            ["AWS/ApplicationELB", "HTTPCode_ELB_5XX_Count", "LoadBalancer", aws_lb.main.arn_suffix],
+            ["AWS/ApplicationELB", "HTTPCode_Target_5XX_Count", "LoadBalancer", aws_lb.main.arn_suffix]
           ]
           period = 60
           stat   = "Sum"
         }
       },
-      # Target Health
+      # Row 2: Target Health
       {
         type   = "metric"
         x      = 0
@@ -694,17 +692,17 @@ resource "aws_cloudwatch_dashboard" "chewbacca_dashboard01" {
         width  = 12
         height = 6
         properties = {
-          title  = "Healthy/Unhealthy Targets"
+          title  = "Healthy vs Unhealthy Targets"
           region = var.aws_region
           metrics = [
-            ["AWS/ApplicationELB", "HealthyHostCount", "TargetGroup", aws_lb_target_group.chewbacca_tg01.arn_suffix, "LoadBalancer", aws_lb.chewbacca_alb01.arn_suffix],
-            ["AWS/ApplicationELB", "UnHealthyHostCount", "TargetGroup", aws_lb_target_group.chewbacca_tg01.arn_suffix, "LoadBalancer", aws_lb.chewbacca_alb01.arn_suffix]
+            ["AWS/ApplicationELB", "HealthyHostCount", "TargetGroup", aws_lb_target_group.main.arn_suffix, "LoadBalancer", aws_lb.main.arn_suffix],
+            ["AWS/ApplicationELB", "UnHealthyHostCount", "TargetGroup", aws_lb_target_group.main.arn_suffix, "LoadBalancer", aws_lb.main.arn_suffix]
           ]
           period = 60
           stat   = "Average"
         }
       },
-      # WAF Blocked Requests
+      # Row 2: WAF Allowed vs Blocked
       {
         type   = "metric"
         x      = 12
@@ -712,16 +710,17 @@ resource "aws_cloudwatch_dashboard" "chewbacca_dashboard01" {
         width  = 12
         height = 6
         properties = {
-          title  = "WAF Blocked Requests"
+          title  = "WAF Allowed vs Blocked"
           region = var.aws_region
           metrics = [
+            ["AWS/WAFV2", "AllowedRequests", "WebACL", "${local.name_prefix}-waf01", "Rule", "ALL"],
             ["AWS/WAFV2", "BlockedRequests", "WebACL", "${local.name_prefix}-waf01", "Rule", "ALL"]
           ]
           period = 60
           stat   = "Sum"
         }
       },
-      # Response Time
+      # Row 3: Response Time (full width)
       {
         type   = "metric"
         x      = 0
@@ -729,10 +728,10 @@ resource "aws_cloudwatch_dashboard" "chewbacca_dashboard01" {
         width  = 24
         height = 6
         properties = {
-          title  = "Target Response Time"
+          title  = "Target Response Time (seconds)"
           region = var.aws_region
           metrics = [
-            ["AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", aws_lb.chewbacca_alb01.arn_suffix]
+            ["AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", aws_lb.main.arn_suffix]
           ]
           period = 60
           stat   = "Average"
@@ -745,79 +744,89 @@ resource "aws_cloudwatch_dashboard" "chewbacca_dashboard01" {
 
 > [!question] SOCRATIC Q&A
 > 
-> ***Q:** Why do we need a dashboard when we have alarms?*
+> ***Q:** What's the difference between `HTTPCode_ELB_5XX_Count` and `HTTPCode_Target_5XX_Count`?*
 > 
-> **A (Explain Like I'm 10):** Alarms are like smoke detectors — they scream when there's a fire, but they don't tell you anything when things are normal. A dashboard is like a car's dashboard — you can see your speed, fuel, engine temperature ANYTIME, even when nothing's wrong. During an incident, dashboards show the CONTEXT: "Is this spike normal? Was traffic already high? Did WAF start blocking more?" Alarms say "problem!"; dashboards say "here's the whole picture."
+> **A (Explain Like I'm 10):** Imagine a restaurant with a host (ALB) and a chef (EC2). `ELB_5XX` means the HOST had a problem — maybe they couldn't find any available tables (all targets unhealthy) or the restaurant is closed (ALB misconfigured). `Target_5XX` means the CHEF had a problem — the food order failed (app crashed), the recipe was wrong (code bug), or the kitchen ran out of ingredients (database connection failed). Tracking both tells you WHERE to look when something breaks.
 > 
-> **Evaluator Question:** *What metrics would you add to detect a DDoS attack vs. a legitimate traffic spike?*
+> **Evaluator Question:** *Why do we use `arn_suffix` instead of the full `arn` for CloudWatch dimensions?*
 > 
-> **Model Answer:** DDoS indicators: (1) WAF blocked requests spike dramatically, (2) Request count increases but unique client IPs don't, (3) Specific URIs targeted repeatedly, (4) Geographic concentration from unusual regions. Legitimate spike indicators: (1) Even distribution across endpoints, (2) Request count and unique IPs increase proportionally, (3) No WAF blocks increase, (4) Matches expected events (marketing campaign, product launch). Add widgets for unique client IPs and geographic distribution to distinguish.
+> **Model Answer:** CloudWatch metric dimensions for ALB expect a specific format — just the suffix portion of the ARN after `loadbalancer/`. The full ARN is `arn:aws:elasticloadbalancing:region:account:loadbalancer/app/name/id`, but CloudWatch only wants `app/name/id`. Terraform's `aws_lb.main.arn_suffix` attribute provides exactly this, avoiding manual string manipulation.
 
 ---
 
-## PART 6: ALB 5xx Error Alarm
+## PART 6: Add CloudWatch Alarm
 
-### Step 6.1: Create SNS Alarm for Server Errors
+### Step 6.1: Add the 5xx Error Alarm
+
+**Action:** Add this block to `bonus_b.tf`:
 
 ```hcl
 # ====================
 # ALB 5xx Error Alarm
 # ====================
 
-resource "aws_cloudwatch_metric_alarm" "chewbacca_alb_5xx_alarm01" {
+resource "aws_cloudwatch_metric_alarm" "alb_5xx" {
   alarm_name          = "${local.name_prefix}-alb-5xx-alarm01"
+  alarm_description   = "Triggers when ALB target 5xx errors exceed threshold"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
   metric_name         = "HTTPCode_Target_5XX_Count"
   namespace           = "AWS/ApplicationELB"
   period              = 60
   statistic           = "Sum"
-  threshold           = 10  # Alert if > 10 5xx errors in 2 consecutive minutes
-  alarm_description   = "ALB target 5xx errors exceeding threshold"
+  threshold           = 10 # Alert if > 10 5xx errors in 2 consecutive minutes
   treat_missing_data  = "notBreaching"
 
   dimensions = {
-    LoadBalancer = aws_lb.chewbacca_alb01.arn_suffix
+    LoadBalancer = aws_lb.main.arn_suffix
   }
 
-  alarm_actions = [aws_sns_topic.chewbacca_sns_topic01.arn]
-  ok_actions    = [aws_sns_topic.chewbacca_sns_topic01.arn]
+  alarm_actions = [aws_sns_topic.alerts.arn]
+  ok_actions    = [aws_sns_topic.alerts.arn]
 
-  tags = {
+  tags = merge(local.common_tags, {
     Name = "${local.name_prefix}-alb-5xx-alarm01"
-  }
+  })
 }
 ```
 
 > [!question] SOCRATIC Q&A
 > 
-> ***Q:** Why do we alert on 5xx errors specifically? What about 4xx errors?*
+> ***Q:** Why `evaluation_periods = 2` instead of alerting on the first error?*
 > 
-> **A (Explain Like I'm 10):** Error codes tell you WHO made the mistake. **4xx errors** (400, 401, 403, 404) mean the USER did something wrong — asked for a page that doesn't exist, forgot their password, etc. **5xx errors** (500, 502, 503) mean YOUR SERVER did something wrong — crashed, can't reach the database, ran out of memory. You can't fix users being confused, but you CAN fix your server breaking. 5xx = "your problem to fix NOW."
+> **A (Explain Like I'm 10):** Imagine your smoke detector at home. Would you want it to scream every time you make toast and a tiny bit of smoke comes out? No! You'd go crazy. You want it to alert when there's REAL smoke for more than a few seconds. `evaluation_periods = 2` means "only alert if there are problems for 2 minutes in a row." One random error is toast smoke; sustained errors are a real fire.
 > 
-> **Evaluator Question:** *What's the difference between `HTTPCode_ELB_5XX_Count` and `HTTPCode_Target_5XX_Count`?*
+> **Evaluator Question:** *What does `treat_missing_data = "notBreaching"` mean and why is it important?*
 > 
-> **Model Answer:** `HTTPCode_ELB_5XX_Count` means the ALB ITSELF generated the error — typically when all targets are unhealthy or timing out. `HTTPCode_Target_5XX_Count` means the EC2 returned a 5xx to the ALB, which passed it through. ELB 5xx = infrastructure problem (no healthy targets). Target 5xx = application problem (your code crashed). Both are serious, but the root cause differs. Monitor both, but Target 5xx usually requires code investigation.
+> **Model Answer:** When there's no metric data (e.g., no traffic to the ALB), CloudWatch must decide how to treat the alarm. Options: `missing` (keep current state), `breaching` (treat as alarm), `notBreaching` (treat as OK), `ignore` (don't evaluate). We use `notBreaching` because NO DATA usually means NO TRAFFIC, which means NO ERRORS. If we used `breaching`, you'd get alerts at 3 AM when nobody's using the site. The alarm should only fire when there IS traffic AND there ARE errors.
 
 ---
 
-## PART 7: DNS Records (Route53)
+## PART 7: Add Route53 DNS Record
 
-### Step 7.1: Point Domain to ALB
+### Step 7.1: Add the Route53 Configuration
+
+**Action:** Add this block to `bonus_b.tf`:
 
 ```hcl
 # ====================
-# Route53 Record - App Subdomain → ALB
+# Route53 DNS
 # ====================
 
-resource "aws_route53_record" "chewbacca_app_record01" {
-  zone_id = aws_route53_zone.chewbacca_zone01.zone_id
-  name    = "${var.app_subdomain}.${var.domain_name}"  # app.chewbacca-growl.com
+# Reference your existing hosted zone (don't create a new one)
+data "aws_route53_zone" "main" {
+  name = var.domain_name
+}
+
+# Point subdomain to ALB
+resource "aws_route53_record" "app" {
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = "${var.app_subdomain}.${var.domain_name}" # e.g., www.wheresjack.com
   type    = "A"
 
   alias {
-    name                   = aws_lb.chewbacca_alb01.dns_name
-    zone_id                = aws_lb.chewbacca_alb01.zone_id
+    name                   = aws_lb.main.dns_name
+    zone_id                = aws_lb.main.zone_id
     evaluate_target_health = true
   }
 }
@@ -825,21 +834,23 @@ resource "aws_route53_record" "chewbacca_app_record01" {
 
 > [!question] SOCRATIC Q&A
 > 
-> ***Q:** Why use an ALIAS record instead of a CNAME record for the ALB?*
+> ***Q:** Why use a `data` source for the hosted zone instead of a `resource`?*
 > 
-> **A (Explain Like I'm 10):** A CNAME is like a forwarding address: "app.chewbacca-growl.com → send to alb123.us-east-1.elb.amazonaws.com." The problem? DNS rules say you CAN'T have a CNAME at the "root" of your domain (chewbacca-growl.com without "app"). ALIAS is AWS's special trick — it looks like an A record (direct IP) but AWS updates the IPs automatically when the ALB changes. ALIAS works at root AND subdomains, and it's FREE for AWS resources (no extra DNS queries billed).
+> **A (Explain Like I'm 10):** Imagine you're visiting a friend's house. You don't BUILD a new house (resource) — you FIND their existing house (data source) using their address. Your Route53 hosted zone already exists (you created it when you registered the domain or set up DNS). A `data` source looks up existing things; a `resource` creates new things. If you used `resource`, Terraform would try to create a SECOND hosted zone, which would conflict with your existing one.
 > 
-> **Evaluator Question:** *What does `evaluate_target_health = true` do?*
+> **Evaluator Question:** *What's the difference between an ALIAS record and a CNAME record for pointing to an ALB?*
 > 
-> **Model Answer:** When true, Route53 checks if the ALB has healthy targets before returning its IP addresses. If all targets are unhealthy, Route53 can return SERVFAIL or route to a backup (if you have failover routing). This integrates DNS with your health checks — users don't get directed to a broken endpoint. For single-ALB setups, it's informational; for multi-region failover, it's critical.
+> **Model Answer:** Both point a domain to another name, but ALIAS has advantages: (1) Works at the zone apex (e.g., `example.com` not just `www.example.com`), (2) Free for AWS resources (CNAME queries cost money), (3) Returns the IP directly (faster, one less DNS lookup), (4) Can integrate with Route53 health checks via `evaluate_target_health`. ALIAS is AWS-specific; CNAME is standard DNS. For AWS resources, always prefer ALIAS.
 
 ---
 
-## PART 8: Outputs
+## PART 8: Create Outputs File
 
-### Step 8.1: Create Bonus-B Outputs
+### Step 8.1: Create bonus_b_outputs.tf
 
-**Action:** Create `bonus_b_outputs.tf`:
+**Action:** Create a new file named `bonus_b_outputs.tf`.
+
+**Action:** Add this content:
 
 ```hcl
 # ====================
@@ -848,22 +859,22 @@ resource "aws_route53_record" "chewbacca_app_record01" {
 
 output "alb_dns_name" {
   description = "ALB DNS name (use for testing before DNS propagates)"
-  value       = aws_lb.chewbacca_alb01.dns_name
-}
-
-output "alb_zone_id" {
-  description = "ALB hosted zone ID (for Route53 ALIAS records)"
-  value       = aws_lb.chewbacca_alb01.zone_id
+  value       = aws_lb.main.dns_name
 }
 
 output "app_url" {
-  description = "Application URL (HTTPS)"
+  description = "Application URL (HTTPS via your domain)"
   value       = "https://${var.app_subdomain}.${var.domain_name}"
+}
+
+output "app_url_direct_alb" {
+  description = "Direct ALB URL (cert won't match - use -k flag with curl)"
+  value       = "https://${aws_lb.main.dns_name}"
 }
 
 output "waf_arn" {
   description = "WAF Web ACL ARN"
-  value       = aws_wafv2_web_acl.chewbacca_waf01.arn
+  value       = aws_wafv2_web_acl.main.arn
 }
 
 output "dashboard_url" {
@@ -873,154 +884,288 @@ output "dashboard_url" {
 
 output "target_group_arn" {
   description = "Target Group ARN (for health check verification)"
-  value       = aws_lb_target_group.chewbacca_tg01.arn
+  value       = aws_lb_target_group.main.arn
+}
+
+output "hosted_zone_id" {
+  description = "Route53 Hosted Zone ID"
+  value       = data.aws_route53_zone.main.zone_id
 }
 ```
 
+**Action:** Save the file.
+
 ---
 
+## PART 9: Fix Conflicting Outputs (Important!)
+
+### Step 9.1: Check for Duplicate Outputs
+
+If your existing `outputs.tf` file has an `app_url` output that references EC2 public IP, it will conflict with the new Bonus-B output.
+
+**Action:** Open `outputs.tf` and look for this block:
+
+```hcl
+output "app_url" {
+  description = "URL to access the application"
+  value       = "http://${aws_instance.app.public_ip}"
+}
+```
+
+**Action:** If found, DELETE this entire block (it's obsolete now — EC2 has no public IP).
+
+**Also delete these if present (they reference the old public EC2):**
+
+```hcl
+output "ec2_public_ip" { ... }
+output "ec2_public_dns" { ... }
+output "init_url" { ... }
+output "list_url" { ... }
+```
+
+**Action:** Save `outputs.tf`.
+
+---
+
+## PART 10: Deploy and Verify
+
+### Step 10.1: Validate Configuration
+
+**Action:** Run:
+
+```bash
 terraform validate
+```
+
+**Expected output:**
+```
+Success! The configuration is valid.
+```
+
+### Step 10.2: Preview Changes
+
+**Action:** Run:
+
+```bash
 terraform plan
+```
+
+**Expected output:** Should show approximately 10-12 resources to add:
+- `aws_security_group.alb`
+- `aws_security_group_rule.ec2_from_alb`
+- `aws_lb.main`
+- `aws_lb_target_group.main`
+- `aws_lb_target_group_attachment.main`
+- `aws_lb_listener.https`
+- `aws_lb_listener.http`
+- `aws_wafv2_web_acl.main`
+- `aws_wafv2_web_acl_association.main`
+- `aws_cloudwatch_dashboard.main`
+- `aws_cloudwatch_metric_alarm.alb_5xx`
+- `aws_route53_record.app`
+
+### Step 10.3: Apply Changes
+
+**Action:** Run:
+
+```bash
 terraform apply
-
-## Application Requirements
-
-> [!warning] CRITICAL - YOUR APP MUST SUPPORT THIS
-> 
-> Your Flask application needs these capabilities:
-> 
-> 1. **Listen on port 80** (or whatever `var.app_port` is set to)
-> 2. **Health check endpoint**: `/health` that returns HTTP 200
-> 3. **Running with proper permissions**: `sudo python3 app.py` or systemd service
-
-### Sample Health Check Endpoint
-
-Add this to your Flask app:
-
-```python
-@app.route('/health')
-def health():
-    """Health check endpoint for ALB"""
-    return 'OK', 200
 ```
 
-> [!question] SOCRATIC Q&A
-> 
-> ***Q:** Why does the health check endpoint just return "OK"? Shouldn't it check the database?*
-> 
-> **A (Explain Like I'm 10):** Imagine you're a doctor doing a quick checkup. A HEALTH check asks "Are you alive and basically functioning?" (heartbeat, breathing). A READINESS check asks "Are you ready to work?" (including dependencies like database). ALB health checks should be FAST — every 30 seconds times hundreds of targets adds up. If the health check calls the database and the DB is slow, the ALB thinks your app is unhealthy when really the DB is just busy. Keep health checks lightweight; use separate endpoints for deeper checks.
-> 
-> **Evaluator Question:** *When would you want the health check to verify database connectivity?*
-> 
-> **Model Answer:** When the application is USELESS without the database. If every request needs DB access and the DB is down, routing traffic to that instance wastes resources and creates user errors. In this case, include a simple DB ping (SELECT 1) in the health check. Balance: Fast health checks keep routing responsive; deeper health checks ensure meaningful availability. Many systems use two endpoints: `/health` (am I running?) and `/ready` (can I serve requests?).
+**Action:** Type `yes` when prompted.
+
+**Expected output:**
+```
+Apply complete! Resources: 12 added, 0 changed, 0 destroyed.
+
+Outputs:
+
+alb_dns_name = "chewbacca-alb01-1234567890.us-west-2.elb.amazonaws.com"
+app_url = "https://www.yourdomain.com"
+...
+```
 
 ---
 
-## Verification Commands
+## PART 11: Verification Tests
 
-### Verify ALB Exists and Is Active
+### Step 11.1: Check Target Health (Critical First Test)
 
-```bash
-# ALB exists and is active
-aws elbv2 describe-load-balancers \
-  --names chewbacca-alb01 \
-  --query "LoadBalancers[0].State.Code"
-# Expected: "active"
-```
-
-### Verify HTTPS Listener
+**Action:** Wait 30-60 seconds for health checks, then run:
 
 ```bash
-# HTTPS listener exists on 443
-aws elbv2 describe-listeners \
-  --load-balancer-arn <ALB_ARN> \
-  --query "Listeners[].{Port:Port,Protocol:Protocol}"
-# Expected: [{Port:443,Protocol:HTTPS}, {Port:80,Protocol:HTTP}]
-```
-
-### Verify Target Health
-
-```bash
-# Targets are healthy
 aws elbv2 describe-target-health \
-  --target-group-arn <TG_ARN>
-# Expected: State = "healthy"
+  --target-group-arn $(terraform output -raw target_group_arn) \
+  --region us-west-2 \
+  --query "TargetHealthDescriptions[].TargetHealth.State"
 ```
 
-### Verify WAF Attachment
+**Expected output:**
+```
+["healthy"]
+```
+
+**If you see `"unhealthy"` or `"initial"`:**
+- Wait another 30 seconds and try again
+- Check that your Flask app has a `/health` endpoint returning 200
+- Verify EC2 security group allows traffic from ALB security group
+
+### Step 11.2: Test HTTPS via Your Domain
+
+**Action:** Run:
 
 ```bash
-# WAF attached to ALB
+curl -I https://www.yourdomain.com
+```
+
+**Expected output:**
+```
+HTTP/2 200
+date: ...
+content-type: text/html; charset=utf-8
+server: Werkzeug/...
+```
+
+> [!note] 404 is OK for Root Path
+> If you see `HTTP/2 404`, that's actually fine — it means TLS is working but your Flask app doesn't have a `/` route. Test `/health` instead:
+> ```bash
+> curl https://www.yourdomain.com/health
+> ```
+> Expected: `OK`
+
+### Step 11.3: Test HTTP→HTTPS Redirect
+
+**Action:** Run:
+
+```bash
+curl -I http://www.yourdomain.com
+```
+
+**Expected output:**
+```
+HTTP/1.1 301 Moved Permanently
+Location: https://www.yourdomain.com:443/
+```
+
+### Step 11.4: Verify WAF is Attached
+
+**Action:** Run (replace with your ALB ARN from terraform output):
+
+```bash
 aws wafv2 get-web-acl-for-resource \
-  --resource-arn <ALB_ARN>
-# Expected: WebACL details returned (not empty)
+  --resource-arn "arn:aws:elasticloadbalancing:us-west-2:YOUR_ACCOUNT:loadbalancer/app/chewbacca-alb01/YOUR_ALB_ID" \
+  --region us-west-2 \
+  --query "WebACL.Name"
 ```
 
-### Verify Alarm Exists
+**Expected output:**
+```
+"chewbacca-waf01"
+```
+
+### Step 11.5: Verify Alarm Exists
+
+**Action:** Run:
 
 ```bash
-# 5xx alarm exists
 aws cloudwatch describe-alarms \
-  --alarm-name-prefix chewbacca-alb-5xx
-# Expected: Alarm configuration returned
+  --alarm-name-prefix chewbacca-alb-5xx \
+  --region us-west-2 \
+  --query "MetricAlarms[].AlarmName"
 ```
 
-### Verify Dashboard Exists
+**Expected output:**
+```
+["chewbacca-alb-5xx-alarm01"]
+```
+
+### Step 11.6: Verify Dashboard Exists
+
+**Action:** Run:
 
 ```bash
-# Dashboard exists
 aws cloudwatch list-dashboards \
-  --dashboard-name-prefix chewbacca
-# Expected: Dashboard name returned
+  --region us-west-2 \
+  --query "DashboardEntries[?DashboardName=='chewbacca-dashboard01'].DashboardName"
 ```
 
-### Test HTTPS Access
-
-```bash
-# Test HTTPS (after DNS propagates)
-curl -I https://app.chewbacca-growl.com
-# Expected: HTTP/2 200 (or 301 redirect first)
-
-# Test HTTP redirect
-curl -I http://app.chewbacca-growl.com
-# Expected: HTTP/1.1 301 Moved Permanently, Location: https://...
+**Expected output:**
+```
+["chewbacca-dashboard01"]
 ```
 
-### Test ALB Direct (Before DNS)
+### Step 11.7: Test App Functionality
+
+**Action:** Run:
 
 ```bash
-# Use ALB DNS directly (bypasses your domain)
-curl -I https://<ALB_DNS_NAME> --insecure
-# Note: --insecure because cert is for your domain, not the ALB DNS
+# Health check
+curl https://www.yourdomain.com/health
+
+# List notes (from Lab 1C)
+curl https://www.yourdomain.com/list
 ```
 
 ---
 
-## Common Failure Modes & Troubleshooting
+## Complete Verification Checklist
 
-| Symptom | Likely Cause | Fix |
-|---------|--------------|-----|
-| ALB returns 502 Bad Gateway | Target not responding on health check port | Verify app is running and listening on correct port |
-| ALB returns 503 Service Unavailable | All targets unhealthy | Check health check path exists (`/health`) and returns 200 |
-| Certificate validation stuck "Pending" | DNS validation records not created | Verify Route53 records or create manually in your DNS provider |
-| HTTPS shows "Not Secure" | Certificate doesn't match domain | Verify ACM cert covers the domain you're accessing |
-| WAF not blocking test attacks | Web ACL not associated | Verify `aws_wafv2_web_acl_association` exists |
-| Alarm not triggering | Wrong metric dimensions | Verify `LoadBalancer` dimension matches ALB ARN suffix |
+| # | Check | Command | Expected |
+|---|-------|---------|----------|
+| 1 | ALB active | `aws elbv2 describe-load-balancers --names chewbacca-alb01 --query "LoadBalancers[0].State.Code"` | `"active"` |
+| 2 | Listeners exist | `aws elbv2 describe-listeners --load-balancer-arn <ALB_ARN> --query "Listeners[].Port"` | `[443, 80]` |
+| 3 | Target healthy | `aws elbv2 describe-target-health --target-group-arn <TG_ARN> --query "TargetHealthDescriptions[].TargetHealth.State"` | `["healthy"]` |
+| 4 | WAF attached | `aws wafv2 get-web-acl-for-resource --resource-arn <ALB_ARN> --query "WebACL.Name"` | `"chewbacca-waf01"` |
+| 5 | Alarm exists | `aws cloudwatch describe-alarms --alarm-name-prefix chewbacca-alb-5xx --query "MetricAlarms[].AlarmName"` | `["chewbacca-alb-5xx-alarm01"]` |
+| 6 | Dashboard exists | `aws cloudwatch list-dashboards --query "DashboardEntries[?DashboardName=='chewbacca-dashboard01'].DashboardName"` | `["chewbacca-dashboard01"]` |
+| 7 | HTTPS works | `curl -I https://www.yourdomain.com` | `HTTP/2 200` or `HTTP/2 404` |
+| 8 | HTTP redirects | `curl -I http://www.yourdomain.com` | `HTTP/1.1 301` |
+| 9 | Health endpoint | `curl https://www.yourdomain.com/health` | `OK` |
+| 10 | App works | `curl https://www.yourdomain.com/list` | Notes from database |
 
 ---
 
-## Deliverables Checklist
+## Common Errors and Fixes
 
-| Requirement | Proof Command |
-|-------------|---------------|
-| ALB exists and active | `aws elbv2 describe-load-balancers --names chewbacca-alb01` |
-| HTTPS listener on 443 | `aws elbv2 describe-listeners --load-balancer-arn <ARN>` |
-| HTTP redirect to HTTPS | `curl -I http://app.chewbacca-growl.com` |
-| Targets healthy | `aws elbv2 describe-target-health --target-group-arn <ARN>` |
-| WAF attached | `aws wafv2 get-web-acl-for-resource --resource-arn <ALB_ARN>` |
-| Alarm exists | `aws cloudwatch describe-alarms --alarm-name-prefix chewbacca-alb-5xx` |
-| Dashboard exists | `aws cloudwatch list-dashboards --dashboard-name-prefix chewbacca` |
-| App accessible via HTTPS | `curl https://app.chewbacca-growl.com/health` returns 200 |
+### Error: "Duplicate output definition"
+
+**Cause:** Both `outputs.tf` and `bonus_b_outputs.tf` define `app_url`.
+
+**Fix:** Delete the `app_url` output from `outputs.tf` (the old one referencing EC2 public IP).
+
+### Error: "Reference to undeclared resource aws_vpc.chewbacca_vpc01"
+
+**Cause:** Your VPC resource is named differently (probably `aws_vpc.main`).
+
+**Fix:** Update all `aws_vpc.chewbacca_vpc01` references to `aws_vpc.main` (or whatever your VPC is named).
+
+### Error: "SSL: no alternative certificate subject name matches"
+
+**Cause:** Your ACM certificate doesn't cover the subdomain you're using.
+
+**Fix:** 
+1. Run `aws acm describe-certificate --certificate-arn YOUR_ARN --query "Certificate.SubjectAlternativeNames"`
+2. Change `app_subdomain` in `variables.tf` to match a covered domain
+3. Or request a new certificate with `*.yourdomain.com` (wildcard)
+
+### Error: Target health shows "unhealthy"
+
+**Cause:** Health check failing — app not responding on `/health`.
+
+**Fix:**
+1. Verify Flask app has `/health` route returning 200
+2. Check EC2 security group allows traffic from ALB security group
+3. SSH via Session Manager and test: `curl http://localhost/health`
+
+### Error: curl returns "Connection refused"
+
+**Cause:** DNS not propagated yet.
+
+**Fix:** Wait 1-2 minutes, then retry. Or test directly via ALB DNS:
+```bash
+curl -Ik https://YOUR-ALB-DNS.us-west-2.elb.amazonaws.com
+```
+(The `-k` flag ignores certificate mismatch)
 
 ---
 
@@ -1034,25 +1179,27 @@ curl -I https://<ALB_DNS_NAME> --insecure
 - **Infrastructure as Code** — Entire stack reproducible via Terraform
 - **Enterprise architecture** — This is how real companies ship
 
-**"I can build, secure, and operate production-grade web infrastructure using code."**
+**Interview Statement:**
 
-*This is exactly how modern companies ship. You're doing real cloud engineering.*
+*"I can build, secure, and operate production-grade web infrastructure with TLS termination, WAF protection against OWASP Top 10 threats, and full observability using CloudWatch dashboards and alarms — all managed as Infrastructure as Code with Terraform."*
 
 ---
 
-## What's Next: Lab 2
+## What's Next
 
-**Lab 2: CloudFront, Origin Cloaking & Caching**
+| Next Step | What You'll Learn |
+|-----------|-------------------|
+| **Bonus C** | Route53 + ACM DNS validation for apex domain |
+| **Bonus D** | ALB access logs to S3 |
+| **Lab 2** | CloudFront CDN + Origin Cloaking (WAF moves to edge) |
 
-In Lab 2, you'll add CloudFront in front of this ALB to:
-- Hide the ALB from direct internet access (origin cloaking)
-- Move WAF to the edge (CloudFront instead of ALB)
-- Implement correct caching policies
-- Enable global edge delivery
+---
 
-This architecture becomes:
-```
-Internet → CloudFront (+ WAF) → ALB (locked) → Private EC2 → RDS
-```
+## Quick Reference: Files Created
 
-*You're building toward a complete enterprise architecture.*
+| File | Resources |
+|------|-----------|
+| `variables.tf` | Added: `domain_name`, `app_subdomain`, `acm_certificate_arn`, `app_port` |
+| `bonus_b.tf` | ALB, SG, Target Group, Listeners, WAF, Dashboard, Alarm, Route53 |
+| `bonus_b_outputs.tf` | ALB DNS, app URL, WAF ARN, dashboard URL |
+| `outputs.tf` | Removed: obsolete EC2 public IP outputs |
